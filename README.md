@@ -30,13 +30,45 @@ i par, oraz przyciski START / PAUZA / STOP / PLAN.
 
 ## Uruchomienie na telefonie (Termux, Android)
 
-Najprościej skrypt instalacyjny:
+### Wariant z rootem (najprostszy, bez ADB)
+
+Telefon z rootem: bot robi zrzut ekranu i klika przez `su`, więc nie ma
+ani ADB, ani debugowania bezprzewodowego.
+
+```bash
+pkg install git
+git clone https://github.com/fagatabez/scrap-bot.git
+cd scrap-bot
+bash setup_termux_root.sh
+python bot.py --backend adb --root
+```
+
+Wymagania:
+- root (Magisk itp.) z przyznanym dostępem dla Termuxa,
+- `opencv-python` i `numpy` z `pkg` (pip ich nie zainstaluje),
+- gra otwarta i widoczna na ekranie; telefon niezablokowany.
+
+### Wariant bez roota (ADB)
 
 ```bash
 pkg install git
 git clone https://github.com/fagatabez/scrap-bot.git
 cd scrap-bot
 bash setup_termux.sh
+bash connect_phone.sh          # parowanie telefonu z samym soba
+export ADB_PATH=$(which adb)
+export ADB_DEVICE=127.0.0.1:40505
+python bot.py --backend adb
+```
+
+### Wariant: gra w emulatorze na PC, sterowanie z telefonu
+
+Bot na telefonie, gra w BlueStacks na komputerze - telefon laczy sie z
+emulatorem po ADB po Wi-Fi:
+
+```bash
+export ADB_DEVICE=192.168.1.20:5555
+python bot.py --backend adb
 ```
 
 Ręcznie:
@@ -66,6 +98,7 @@ Uwagi:
 |---|---|---|
 | `ADB_PATH` | `C:\ADB\adb.exe` | ścieżka do adb |
 | `ADB_DEVICE` | `127.0.0.1:5555` | serial urządzenia ADB |
+| `SCRAP_USE_ROOT` | - | `1` = zrzut i tapy przez `su` (telefon z rootem) |
 
 ## Pliki
 

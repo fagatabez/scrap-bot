@@ -21,6 +21,8 @@ import tempfile
 
 ADB = os.environ.get("ADB_PATH", r"C:\ADB\adb.exe")
 DEVICE = os.environ.get("ADB_DEVICE", "127.0.0.1:5555")
+# root na telefonie: zrzut i tapy idą przez su, bez ADB
+USE_ROOT = os.environ.get("SCRAP_USE_ROOT", "") not in ("", "0", "false", "False")
 
 # prog decyzji "ta sama beczka" (0 = identyczne, 1 = zupelnie inne)
 SAME_THRESHOLD = 0.32
@@ -99,21 +101,52 @@ def grid_centers(rect):
 
 # ---------------------------------------------------------------- zrzut
 def connect():
-    """Podlacza sie do urzadzenia po ADB (potrzebne gdy bot jest na telefonie,
-    a emulator siedzi na komputerze)."""
-    if ":" not in DEVICE or DEVICE.startswith("127.") or DEVICE.startswith("localhost"):
+    """Podlacza sie do urzadzenia po ADB.
+
+    Dwa warianty:
+      * bot na telefonie, gra na telefonie - telefon laczy sie z samym soba
+        przez debugowanie bezprzewodowe (localhost:PORT),
+      * bot na telefonie, gra w emulatorze na PC - laczy sie z IP komputera.
+    """
+    if ":" not in DEVICE:
         return
     subprocess.run([ADB, "connect", DEVICE],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                    check=False)
 
 
+def adb_shell(*args, timeout=20):
+    """Polecenie w powloce urzadzenia (uzywane do tapow i swipe'ow)."""
+    connect()
+    return subprocess.run([ADB, "-s", DEVICE, "shell", *args],
+                          capture_output=True, text=True, timeout=timeout,
+                          check=False)
+
+
 def screencap(path: str) -> np.ndarray:
+    if USE_ROOT:
+        # root: zrzut przez su, bez ADB - telefon gra sam w sobie
+        with open(path, "wb") as f:
+            proc = subprocess.run(["su", "-c", f"screencap -p > {path}"],
+                                  capture_output=True, timeout=20, check=False)
+        img = cv2.imread(path)
+        if img is None:
+            raise RuntimeError(f"screencap (root) nieudany: {proc.stderr[:200]}")
+        return img
     connect()
     with open(path, "wb") as f:
         subprocess.run([ADB, "-s", DEVICE, "exec-out", "screencap", "-p"],
                        stdout=f, check=True)
     return cv2.imread(path)
+
+
+def shell(*args, timeout=20):
+    """Polecenie powloki systemowej: przez ADB albo (z rootem) przez su."""
+    if USE_ROOT:
+        cmd = " ".join(args)
+        return subprocess.run(["su", "-c", cmd], capture_output=True, text=True,
+                              timeout=timeout, check=False)
+    return adb_shell(*args, timeout=timeout)
 
 
 # ---------------------------------------------------------------- detekcja

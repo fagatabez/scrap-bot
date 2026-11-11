@@ -87,20 +87,15 @@ def grab():
 
 def tap(x, y):
     if BACKEND == "adb":
-        import subprocess
-        pairs.connect()
-        subprocess.run([pairs.ADB, "-s", pairs.DEVICE, "exec-out", "input", "tap",
-                        str(int(x)), str(int(y))], check=False)
+        pairs.shell("input", "tap", str(int(x)), str(int(y)))
     else:
         win.tap(x, y)
 
 
 def do_merge(a, b):
     if BACKEND == "adb":
-        import subprocess
-        pairs.connect()
-        subprocess.run([pairs.ADB, "-s", pairs.DEVICE, "exec-out", "input", "swipe",
-                        str(a[0]), str(a[1]), str(b[0]), str(b[1]), "170"], check=False)
+        pairs.shell("input", "swipe", str(int(a[0])), str(int(a[1])),
+                    str(int(b[0])), str(int(b[1])), "170")
     else:
         win.drag(a[0], a[1], b[0], b[1], steps=10, hold=0.025)
 
@@ -402,6 +397,8 @@ def main():
     ap.add_argument("--fast", action="store_true", help="(domyslne) szybkie dragi")
     ap.add_argument("--loop", action="store_true", help="(domyslne) praca ciagla")
     ap.add_argument("--backend", choices=("win", "adb"), default="win")
+    ap.add_argument("--root", action="store_true",
+                    help="telefon z rootem: zrzut i tapy przez su, bez ADB")
     ap.add_argument("--threshold", type=float, default=pairs.SAME_THRESHOLD)
     ap.add_argument("--settle", type=float, default=None, help="czekanie po dragu (s)")
     ap.add_argument("--collect", action="store_true", help="tylko zbieraj scrap")
@@ -411,6 +408,12 @@ def main():
 
     BACKEND = args.backend
     STORM_MERGE = args.storm_merge
+    if args.backend == "adb" and args.root:
+        pairs.USE_ROOT = True
+    if BACKEND == "adb" and pairs.USE_ROOT:
+        # telefon: ekran musi byc wlaczony, inaczej screencap zwraca pustke
+        pairs.shell("input", "keyevent", "KEYCODE_WAKEUP")
+        pairs.shell("svc", "power", "stayon", "true")
     if args.settle is not None:
         SETTLE = args.settle
     elif args.safe:
