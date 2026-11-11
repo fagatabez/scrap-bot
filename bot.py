@@ -88,6 +88,7 @@ def grab():
 def tap(x, y):
     if BACKEND == "adb":
         import subprocess
+        pairs.connect()
         subprocess.run([pairs.ADB, "-s", pairs.DEVICE, "exec-out", "input", "tap",
                         str(int(x)), str(int(y))], check=False)
     else:
@@ -97,6 +98,7 @@ def tap(x, y):
 def do_merge(a, b):
     if BACKEND == "adb":
         import subprocess
+        pairs.connect()
         subprocess.run([pairs.ADB, "-s", pairs.DEVICE, "exec-out", "input", "swipe",
                         str(a[0]), str(a[1]), str(b[0]), str(b[1]), "170"], check=False)
     else:

@@ -98,7 +98,18 @@ def grid_centers(rect):
 
 
 # ---------------------------------------------------------------- zrzut
+def connect():
+    """Podlacza sie do urzadzenia po ADB (potrzebne gdy bot jest na telefonie,
+    a emulator siedzi na komputerze)."""
+    if ":" not in DEVICE or DEVICE.startswith("127.") or DEVICE.startswith("localhost"):
+        return
+    subprocess.run([ADB, "connect", DEVICE],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   check=False)
+
+
 def screencap(path: str) -> np.ndarray:
+    connect()
     with open(path, "wb") as f:
         subprocess.run([ADB, "-s", DEVICE, "exec-out", "screencap", "-p"],
                        stdout=f, check=True)
