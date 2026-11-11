@@ -30,16 +30,27 @@ i par, oraz przyciski START / PAUZA / STOP / PLAN.
 
 ## Uruchomienie na telefonie (Termux, Android)
 
-Bot moze dzialac wlasnie na telefonie (Termux) i sterowac gra przez ADB:
+Najprościej skrypt instalacyjny:
+
+```bash
+pkg install git
+git clone https://github.com/fagatabez/scrap-bot.git
+cd scrap-bot
+bash setup_termux.sh
+```
+
+Ręcznie:
 
 ```bash
 pkg update && pkg install python x11-repo opencv-python python-numpy android-tools
-pip install -r requirements.txt   # tylko to, czego nie ma w pkg
-adb connect <IP_GRA>:5555
 export ADB_PATH=$(which adb)
-export ADB_DEVICE=<IP_GRA>:5555
+export ADB_DEVICE=<IP_GRA>:5555     # IP komputera z emulatorem
+adb connect $ADB_DEVICE
 python bot.py --backend adb
 ```
+
+Bot łączy się z emulatorem po ADB (dodaje `adb connect` przy starcie),
+więc po jednorazowym `adb connect` nie musisz nic więcej ustawiać.
 
 Uwagi:
 - `opencv-python` i `numpy` instaluj z `pkg`, nie z `pip` (pip na Androidzie
