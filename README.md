@@ -162,6 +162,21 @@ za kazdym razem, wiec plansza nie zaplata sie i bot nie robi dziwnych ruchow.
 
 Wylaczenie: `--no-pattern` (wtedy laczy najblizsza para).
 
+## Obrocone okno i obce gry
+
+* **Ekran obrocony** (telefon/emulator w poziomie): bot rozpoznaje to po
+  ikonie magnesu w HUD, prostuje obraz i mapuje wspolrzedne z powrotem -
+  laczy normalnie, a okna gry (oferta, anty-macro) tez.
+* **Obca gra w emulatorze**: bot sprawdza, czy to na pewno Scrap Clicker 2
+  (jasnozielona plansza albo zlota korona z okna oferty). Jesli nie - **nic
+  nie klika**, tylko czeka i pisze w logu. Nie macha myszka w innej grze.
+
+## Reklama a sztorm
+
+Oba ekrany sa ciemne, wiec bot rozroznia je po **zielonym pasku gry** u
+dolu (reklama go nie ma). Wczesniej reklama byla mylona ze sztormem - bot
+zamiast zamknac reklame zaczynal zbierac scrapa po niej.
+
 ## Okna gry a sztorm
 
 Pod oknem (reklama, popup, anty-macro) plansza jest **przyciemniona** i wyglada

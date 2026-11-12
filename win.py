@@ -137,11 +137,17 @@ def ensure_window():
     """Okno gry: najpierw po PID procesu, w razie braku po tytule."""
     global HWND
     if HWND:
+        if user32.IsIconic(HWND):
+            user32.ShowWindow(HWND, 9)      # SW_RESTORE
+            time.sleep(0.3)
         return HWND
     pid = pid_of()
     HWND = (find_window_by_pid(pid) if pid else None) or find_window()
     if not HWND:
         raise RuntimeError("Nie znaleziono okna gry (HD-Player / BlueStacks)")
+    if user32.IsIconic(HWND):
+        user32.ShowWindow(HWND, 9)
+        time.sleep(0.3)
     return HWND
 
 

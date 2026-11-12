@@ -52,6 +52,87 @@ def looks_like_game(img):
     return board_rect(img) is not None
 
 
+def hud_visible(img, min_mean=78.0):
+    """Czy widac pasek HUD gry (liczniki, magnes, pasek poziomu)?
+
+    Reklama tez potrafi wygladac jak plansza (duzy jednolity obszar), wiec
+    dodatkowo sprawdzamy, czy gora ekranu jest jasna - w grze jest tam pasek
+    z liczbami na jasnym tle, w reklamie ciemna plansza.
+    """
+    h, w = img.shape[:2]
+    y0, y1 = int(h * 0.05), int(h * 0.14)
+    if y1 <= y0:
+        return True
+    g = cv2.cvtColor(img[y0:y1], cv2.COLOR_BGR2GRAY)
+    return float(g.mean()) > min_mean
+
+
+def has_crown(img, min_score=0.18):
+    """Czy w kadrze jest zlota korona (szablon z okna oferty).
+
+    Porownujemy maske zoltego koloru z szablonem (roznica pikseli), a nie
+    korelacje - inaczej wielki zluty obszar w innej grze tez "pasowal".
+    """
+    tmpl = cv2.imread(CROWN, cv2.IMREAD_GRAYSCALE)
+    if tmpl is None:
+        return False
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    yellow = cv2.inRange(hsv, np.array([18, 90, 120]), np.array([38, 255, 255]))
+    yellow = cv2.morphologyEx(yellow, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    h, w = yellow.shape[:2]
+    best = 1.0
+    for s in (0.3, 0.4, 0.55, 0.7, 0.9, 1.0, 1.1, 1.4, 1.8):
+        t = cv2.resize(tmpl, (max(4, int(tmpl.shape[1] * s)),
+                              max(4, int(tmpl.shape[0] * s))),
+                       interpolation=cv2.INTER_NEAREST)
+        if t.shape[0] >= h or t.shape[1] >= w:
+            continue
+        res = cv2.matchTemplate(yellow, t, cv2.TM_SQDIFF_NORMED)
+        best = min(best, float(res.min()))
+    return best < min_score
+
+
+def is_scrap_game(img, min_frac=0.06):
+    """Czy to na pewno Scrap Clicker 2 (plansza albo okno gry)?
+
+    Plansza ma jasnozielone tlo, a okna oferty zlota korone. Inne gry
+    w emulatorze tego nie maja - bot wtedy nic nie robi, zamiast machac
+    myszka w obcej aplikacji.
+    """
+    h, w = img.shape[:2]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    m = ((hsv[:, :, 0] >= 40) & (hsv[:, :, 0] <= 80) &
+         (hsv[:, :, 1] >= 20) & (hsv[:, :, 1] <= 90) &
+         (hsv[:, :, 2] >= 165))
+    if float(m.mean()) > min_frac:
+        return True
+    return has_crown(img)
+
+
+def game_bar(img, min_frac=0.05):
+    """Czy widac zielony pasek gry (dolny pasek z beczkami i strzalka).
+
+    Reklama go nie ma - to najprostszy rozroznik reklamy od gry. W sztormie
+    pasek jest przyciemniony, ale nadal zielony, wiec dziala tam too.
+    Sprawdzamy wszystkie krawedzie, bo ekran moze byc obrocony.
+    """
+    h, w = img.shape[:2]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    m = (hsv[:, :, 0] >= 30) & (hsv[:, :, 0] <= 90) & (hsv[:, :, 1] > 120)
+    edges = {
+        "bottom": float(m[int(h * 0.90):].mean()),
+        "top": float(m[:int(h * 0.10)].mean()),
+        "left": float(m[:, :int(w * 0.10)].mean()),
+        "right": float(m[:, int(w * 0.90):].mean()),
+    }
+    return max(edges.values()) > min_frac
+
+
+def game_visible(img):
+    """Czy naprawde widac gre (a nie reklame)."""
+    return looks_like_game(img) and hud_visible(img)
+
+
 def has_popup(img, min_frac=0.05):
     """Czy na ekranie jest okno (reklama, popup, anty-macro).
 
@@ -211,6 +292,23 @@ def title_is_boost(img, crown_bottom, btn_top, x0=0, x1=None):
 def find_boost_button(img):
     """Przycisk "Tak!" w popupie "Szybsze Beczki" albo None.
 
+    Ekran moze byc obrocony (telefon/emulator w poziomie) - wtedy szukamy
+    w orientacji gry i mapujemy wspolrzedne z powrotem na oryginalny obraz.
+    """
+    import pairs
+    angle = pairs.rotation(img)
+    if angle:
+        H, W = img.shape[:2]
+        pos = _boost_button_in_game(pairs.rotate_to_portrait(img, angle))
+        if pos is None:
+            return None
+        return pairs.map_point_back(pos[0], pos[1], angle, H, W)
+    return _boost_button_in_game(img)
+
+
+def _boost_button_in_game(img):
+    """Przycisk "Tak!" w popupie "Szybsze Beczki" albo None.
+
     Rozpoznanie jest bezpieczne: musi byc zielony przycisk z bialym napisem,
     czerwony przycisk tego samego rozmiaru w tym samym rzedu (lewy "Nie"),
     zlota korona z tego okna ORAZ tytul "Szybsze Beczki" (nie "Auto Laczenie"
@@ -286,9 +384,24 @@ def _green_button_width(img):
 def find_red_button(img):
     """Czerwony przycisk "Nie" w popupie (obok zielonego "Tak!").
 
-    Szukamy go samodzielnie (nie przez zielony przycisk) - w chwili po
-    kliknieciu koronki zielony "Tak!" moze byc jeszcze niewidoczny
-    (animacja okna), a czerwony "Nie" juz widać.
+    Ekran moze byc obrocony - wtedy szukamy w orientacji gry i mapujemy
+    wspolrzedne z powrotem.
+    """
+    import pairs
+    angle = pairs.rotation(img)
+    if angle:
+        H, W = img.shape[:2]
+        pos = _red_button_in_game(pairs.rotate_to_portrait(img, angle))
+        if pos is None:
+            return None
+        return pairs.map_point_back(pos[0], pos[1], angle, H, W)
+    return _red_button_in_game(img)
+
+
+def _red_button_in_game(img):
+    """Czerwony przycisk "Nie" - szukamy go samodzielnie (nie przez zielony
+    przycisk), bo w chwili po kliknieciu koronki "Tak!" moze byc jeszcze
+    niewidoczny (animacja okna), a czerwony "Nie" juz widac.
     """
     h, w = img.shape[:2]
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
@@ -473,7 +586,12 @@ def solve_anti_macro(io, frame=None, verbose=True):
     beczka jest w prawym gornym rogu napisu, a w siatce 3x3 lezy 9 innych.
     Wariant z liczbami wymaga OCR - wtedy bot nic nie klika i czeka.
     """
+    import pairs
     frame = frame if frame is not None else io.grab()
+    H, W = frame.shape[:2]
+    angle = pairs.rotation(frame)
+    if angle:
+        frame = pairs.rotate_to_portrait(frame, angle)
     panel = _event_panel(frame)
     if not panel:
         return False
@@ -545,6 +663,12 @@ def solve_anti_macro(io, frame=None, verbose=True):
         return False
     x, y, bw, bh, _ = best
     tx, ty = px + x + bw // 2, py + y + bh // 2
+    if angle:
+        tx, ty = pairs.map_point_back(tx, ty, angle, H, W)
+    if not (0 <= tx < W and 0 <= ty < H):
+        if verbose:
+            print("[BOT] anty-macro: klik poza ekranem - czekam")
+        return False
     io.tap(tx, ty)
     if verbose:
         print(f"[BOT] anty-macro: klikam beczke ({tx}, {ty}) "
@@ -552,11 +676,17 @@ def solve_anti_macro(io, frame=None, verbose=True):
     time.sleep(0.4)
     # nagroda: niebieski przycisk na dole panelu
     after = io.grab()
+    angle2 = pairs.rotation(after)
+    if angle2:
+        after = pairs.rotate_to_portrait(after, angle2)
     panel2 = _event_panel(after)
     if panel2:
         btn = find_blue_button(after, panel2)
         if btn:
-            io.tap(*btn)
+            if angle2:
+                btn = pairs.map_point_back(btn[0], btn[1], angle2, H, W)
+            if 0 <= btn[0] < W and 0 <= btn[1] < H:
+                io.tap(*btn)
             if verbose:
                 print(f"[BOT] anty-macro: odbieram nagrode {btn}")
             time.sleep(0.5)
@@ -620,7 +750,7 @@ def close_after_ad(io, tries=25):
     """
     for i in range(tries):
         frame = io.grab()
-        if looks_like_game(frame):
+        if game_visible(frame):
             return True
         try:
             if io.back():
@@ -640,7 +770,7 @@ def close_after_ad(io, tries=25):
 def close_screen(io, tries_corners=True, try_boost=True):
     """Proboje zamknac to, co zaslania gre. True = chyba sie udalo."""
     frame = io.grab()
-    if looks_like_game(frame):
+    if game_visible(frame):
         return True
 
     # Popup oferty "Szybsze Beczki": klikamy "Tak!" (obejrzyj reklame) i
@@ -658,12 +788,12 @@ def close_screen(io, tries_corners=True, try_boost=True):
     if pos:
         io.tap(*pos)
         time.sleep(0.7)
-        if looks_like_game(io.grab()):
+        if game_visible(io.grab()):
             return True
 
     io.key(4)                                  # WSTECZ zamyka wiekszosc reklam
     time.sleep(0.9)
-    if looks_like_game(io.grab()):
+    if game_visible(io.grab()):
         return True
 
     if tries_corners:
@@ -671,7 +801,7 @@ def close_screen(io, tries_corners=True, try_boost=True):
         for fx, fy in ((0.94, 0.05), (0.06, 0.05), (0.94, 0.95), (0.5, 0.95)):
             io.tap(int(w * fx), int(h * fy))
             time.sleep(0.6)
-            if looks_like_game(io.grab()):
+            if game_visible(io.grab()):
                 return True
     return False
 
@@ -727,7 +857,7 @@ class Boost:
         # reklama moze sie ladowac - dajemy jej kilka sekund i zamykamy
         for _ in range(12):
             frame = io.grab()
-            if looks_like_game(frame):
+            if game_visible(frame):
                 self.clicks += 1
                 return True
             pos = find_close_button(frame)

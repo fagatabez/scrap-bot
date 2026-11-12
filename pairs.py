@@ -173,27 +173,141 @@ def shell(*args, timeout=20):
 
 
 # ---------------------------------------------------------------- detekcja
+def magnet_pos(img: np.ndarray):
+    """Pozycja ikony magnesu w HUD (czerwono-niebieska podkowa) albo None.
+
+    Magnes jest zawsze w HUD gry - dzieki niemu poznajemy, czy ekran jest
+    obrocony (telefon/emulator w trybie poziomym).
+    """
+    h, w = img.shape[:2]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    red = cv2.inRange(hsv, np.array([0, 120, 90]), np.array([12, 255, 255])) | \
+        cv2.inRange(hsv, np.array([168, 120, 90]), np.array([180, 255, 255]))
+    blue = cv2.inRange(hsv, np.array([100, 110, 80]), np.array([132, 255, 255]))
+    red = cv2.morphologyEx(red, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    blue = cv2.morphologyEx(blue, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    n, _, st, _ = cv2.connectedComponentsWithStats(red, 8)
+    best = None
+    for i in range(1, n):
+        x, y, bw, bh, a = st[i]
+        if a < 30 or a > 0.03 * h * w:
+            continue
+        cx, cy = x + bw // 2, y + bh // 2
+        near = blue[max(0, cy - 45):cy + 45, max(0, cx - 45):cx + 45]
+        if int((near > 0).sum()) < 30:           # nie ma niebieskiego obok
+            continue
+        if best is None or a > best[4]:
+            best = (x, y, bw, bh, a)
+    if best is None:
+        return None
+    x, y, bw, bh, _ = best
+    return x + bw // 2, y + bh // 2
+
+
+def _green_edges(img: np.ndarray):
+    """Ile nasyconej zieleni jest przy kazdej krawedzi obrazu."""
+    h, w = img.shape[:2]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    m = (hsv[:, :, 0] >= 30) & (hsv[:, :, 0] <= 90) & (hsv[:, :, 1] > 120)
+    return {
+        "bottom": float(m[int(h * 0.90):].mean()),
+        "top": float(m[:int(h * 0.10)].mean()),
+        "left": float(m[:, :int(w * 0.10)].mean()),
+        "right": float(m[:, int(w * 0.90):].mean()),
+    }
+
+
+def rotation(img: np.ndarray) -> int:
+    """Kat obrotu obrazu, zeby gra byla znowu pionowa (0/90/180/270).
+
+    Magnes z HUD-a mowi, gdzie jest "gora" gry. Dodatkowo sprawdzamy, czy po
+    obrocie zielony dolny pasek gry faktycznie wyladuje na dole - inaczej
+    to nie obraz gry (np. wycinek) i nie obracamy nic.
+    """
+    pos = magnet_pos(img)
+    if pos is None:
+        return 0
+    cx, cy = pos
+    h, w = img.shape[:2]
+    if cy < 0.25 * h:
+        return 0
+    if cx > 0.75 * w:
+        angle = 90             # magnes z prawej - obracamy w lewo
+    elif cx < 0.25 * w:
+        angle = 270
+    else:
+        angle = 180
+    edges = _green_edges(rotate_to_portrait(img, angle))
+    if edges["bottom"] < 0.25 or edges["bottom"] < max(edges.values()) - 0.05:
+        return 0                # nie wyglada na obraz gry - zostawiamy
+    return angle
+
+
+def rotate_to_portrait(img: np.ndarray, angle: int) -> np.ndarray:
+    if angle == 90:
+        return cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    if angle == 180:
+        return cv2.rotate(img, cv2.ROTATE_180)
+    if angle == 270:
+        return cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+    return img
+
+
+def _map_back(box, angle: int, H: int, W: int):
+    """Pole w obroconym obrazie -> pole w oryginalnym obrazie.
+
+    Sprawdzone na syntetycznym znaczniku: cv2.ROTATE_90_COUNTERCLOCKWISE
+    daje R.x = O.y, R.y = W-1-O.x; ROTATE_90_CLOCKWISE - odwrotnie.
+    """
+    x, y, bw, bh = box
+    if angle == 90:
+        return W - y - bh, x, bh, bw
+    if angle == 180:
+        return W - x - bw, H - y - bh, bw, bh
+    if angle == 270:
+        return y, H - x - bw, bh, bw
+    return box
+
+
+def map_point_back(x: int, y: int, angle: int, H: int, W: int):
+    """Punkt z obrazu obroconego -> punkt w oryginalnym obrazie."""
+    if angle == 90:
+        return int(W - 1 - y), int(x)
+    if angle == 180:
+        return int(W - 1 - x), int(H - 1 - y)
+    if angle == 270:
+        return int(y), int(H - 1 - x)
+    return int(x), int(y)
+
+
 def find_barrels(img: np.ndarray):
     """Zwraca liste (x, y, w, h) beczek. Tlo wykrywane z obrazu, wiec dziala
     przy dowolnej rozdzielczosci i motywie graficznym.
 
     Maska i morfologia licza sie na obrazie o polowe mniejszym (4x taniej),
     a wspolrzedne wracaja do pelnej skali. Zmierzone: 42 ms -> ~12 ms.
+
+    Jesli ekran jest obrocony (telefon/emulator w poziomie), detekcja liczy
+    sie na obroconej kopii, a wspolrzedne wracaja do oryginalu.
     """
-    h, w = img.shape[:2]
+    H, W = img.shape[:2]
+    angle = rotation(img)
+    src = rotate_to_portrait(img, angle) if angle else img
+    h, w = src.shape[:2]
     s = 0.5 if w >= 640 else 1.0
     if s != 1.0:
-        work = cv2.resize(img, (int(w * s), int(h * s)),
+        work = cv2.resize(src, (int(w * s), int(h * s)),
                           interpolation=cv2.INTER_AREA)
     else:
-        work = img
+        work = src
     wh, ww = work.shape[:2]
     y0, y1 = int(wh * 0.12), int(wh * 0.89)        # pomijamy HUD i dolny pasek
     band = work[y0:y1]
 
     # najczestszy kolor w pasie gry = tlo planszy
     bg, _ = dominant_bgr(band)
-    mask = distance_mask(band, bg)    # jadro 3 na obrazie o polowe mniejszym: przy 5 zlewal sie sasiad
+    mask = distance_mask(band, bg)
+    # jadro 3 na obrazie o polowie mniejszym: przy 5 zlewal sie sasiad
     # z szara beczka i jedna znikala (19 zamiast 20)
     k = 5 if s == 1.0 else 3
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((k, k), np.uint8))
@@ -221,13 +335,15 @@ def find_barrels(img: np.ndarray):
     med = float(np.median([b[3] for b in boxes]))
     boxes = [b for b in boxes if b[3] > 0.88 * med]
 
+    # wspolrzedne do oryginalnego obrazu (jesli ekran byl obrocony)
+    if angle:
+        boxes = [_map_back(b, angle, H, W) for b in boxes]
+
     # odsiew pustych (nierespionych) pol - szary walec bez koloru
     boxes = [b for b in boxes if not is_empty_slot(img, b)]
 
-    boxes.sort(key=lambda b: (round(b[1] / (0.3 * h)), b[0]))
+    boxes.sort(key=lambda b: (round(b[1] / (0.3 * H)), b[0]))
     return boxes
-
-
 def is_empty_slot(img: np.ndarray, box, max_sat: int = EMPTY_MAX_SAT,
                   max_val: int = EMPTY_MAX_VAL) -> bool:
     """Puste pole = szary walec bez czarnej czapy.

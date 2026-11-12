@@ -246,6 +246,8 @@ def scanner_loop():
     last_cover = 0.0
     last_boost = 0.0
     last_boost_check = 0.0
+    seen_game = False            # czy widzielismy juz Scrap Clicker 2
+    warned_other = False
     fails = 0
     while not STATE["stop"]:
         if STATE["paused"]:
@@ -288,8 +290,28 @@ def scanner_loop():
             # wtedy jak sztorm. Trzeba to sprawdzic PRZED sztormem, inaczej
             # bot zamiast obsluzyc okno zacznie zbierac scrapa.
             popup = ads.has_popup(frame)
+            # zielony dolny pasek gry - reklamy go nie ma
+            in_game = ads.game_bar(frame)
 
-            storm = pairs.is_storm(frame) and not STORM_MERGE and not popup
+            # Czy to na pewno Scrap Clicker 2? Jesli bot widzial juz gre,
+            # a teraz jej nie ma - to reklama/okno tej gry (zamykamy).
+            # Jesli gry nie widzial w ogole - to inna aplikacja w emulatorze
+            # i nie ruszamy sie, zeby nie machac myszka w obcej grze.
+            if ads.is_scrap_game(frame):
+                seen_game = True
+            elif not seen_game:
+                if not warned_other:
+                    print("[BOT] to nie jest Scrap Clicker 2 - czekam "
+                          "(nie bede klapal w inna gre)")
+                    warned_other = True
+                with LOCK:
+                    STATE["plan"] = None
+                    STATE["serial"] += 1
+                time.sleep(1.0)
+                continue
+
+            storm = (pairs.is_storm(frame) and not STORM_MERGE
+                     and in_game and not popup)
             if storm:
                 with LOCK:
                     STATE["storm"] = True
@@ -297,6 +319,16 @@ def scanner_loop():
                     STATE["serial"] += 1
             else:
                 boxes, _, prs = pairs.find_pairs(frame)
+                # reklama na pelnym ekranie: brak paska gry, wiec nie jest
+                # to sztorm tylko reklama - trzeba ja zamknac
+                if GUARD and not in_game and not popup:
+                    with LOCK:
+                        STATE["plan"] = None
+                        STATE["serial"] += 1
+                    if ads.close_screen(IO):
+                        STATS["ads_closed"] = STATS.get("ads_closed", 0) + 1
+                        print("[BOT] zamknalem reklame - wracam do laczenia")
+                    continue
                 # okno na ekranie = reklama/popup/ekran ulepszen.
                 # Sprawdzamy plansze tylko wtedy, gdy beczek jest malo - na
                 # normalnej planszy to zbedne 25 ms na kazdy skan.
@@ -604,7 +636,7 @@ def worker_loop(forever=True):
                     delay *= random.uniform(0.7, 1.4)     # losowe wahania
                     if random.random() < 0.15:
                         delay += random.uniform(0.05, 0.25)
-                    time.sleep(delay)
+                    time.sleep(max(0.0, delay))
         _remember_action(a, b)                      # zanim skaner zrobi zrzut
         do_merge(a, b)
         last_action = time.time()
