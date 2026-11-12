@@ -14,8 +14,9 @@ Kontrola jakosci (zastepuje wolna weryfikacje po kazdym dragu):
     pojedynczy falszywy match nie zapetla bota.
 
 Sztorm (przyciemniona plansza) zatrzymuje laczenie i wlacza zbieranie scrapa:
-tap w kazde pole siatki 4x5. Puste, szare pola sa pomijane i nie licza sie
-jako beczki.
+jedna dluga gestia „trzymaj i machaj" po calym ekranie (tor zygzakiem), a nie
+20 tapniec - gra zbiera tylko wtedy, gdy przycisk jest trzymany i sie rusza.
+Ten sam przejazd leci takze wtedy, gdy nie ma czego laczyc.
 
 Uzycie:
     python bot.py                 # domyslnie: skaner + robotnik, F8 pauza, F9 stop
@@ -24,7 +25,8 @@ Uzycie:
     python bot.py --once          # jeden przebieg i koniec
     python bot.py --merge 3       # jeden przebieg, maks. 3 merge'y
     python bot.py --until-done    # konczy, gdy nie ma czego laczyc
-    python bot.py --collect       # tylko zbieraj scrap (20 tapow)
+    python bot.py --collect       # tylko zbieraj scrap (przejazd po ekranie)
+    python bot.py --no-sweep      # nie zbieraj przy bezczynnosci
     python bot.py --storm-merge   # lacz takze w sztormie (po kupieniu za gwiazdy)
     python bot.py --backend adb   # telefon przez ADB zamiast okna
 
@@ -52,16 +54,20 @@ SHOT = os.path.join(tempfile.gettempdir(), "scrap_bot_shot.png")
 BACKEND = "auto"            # auto | root | adb | win - rozpoznawane przy starcie
 IO = None                   # obiekt wejscia/wyjscia wybrany przez backends.detect
 STORM_MERGE = False         # True po kupieniu laczenia w sztormie za gwiazdy
-SWIPE_MS = 90               # czas trwania dragu (ms) - krotszy = sztybsze laczenie
+SWIPE_MS = 75               # czas trwania dragu (ms) - krotszy = szybsze laczenie
 
-SCAN_INTERVAL = 0.02        # odstep miedzy skanami planszy
-SETTLE = 0.06               # zrzut musi byc nowszy niz drag + SETTLE
-MERGE_GAP = 0.04            # przerwa miedzy kolejnymi dragami
-ANIM = 0.32                 # tyle sekund nie ufamy polom dotknietym dragiem
+SCAN_INTERVAL = 0.015       # odstep miedzy skanami planszy
+SETTLE = 0.05               # zrzut musi byc nowszy niz drag + SETTLE
+MERGE_GAP = 0.03            # przerwa miedzy kolejnymi dragami
+ANIM = 0.26                 # tyle sekund nie ufamy polom dotknietym dragiem
 RETRY = 1.2                 # ta sama para moze byc powtorzona po tym czasie
 VERIFY_THRESHOLD = 0.35     # zmiana wygladu pola = merge przeszedl (tryb --once)
-TAP_GAP = 0.05              # odstep miedzy tapami przy zbieraniu
-STORM_PAUSE = 0.25          # przerwa miedzy cyklami zbierania w sztormie
+TAP_GAP = 0.05              # odstep miedzy tapami (juz nieuzywany w zbieraniu)
+SWEEP_LINES = 5             # ile poziomych przejazdow przy zbieraniu trzymajac
+SWEEP_SEG_MS = 110          # czas jednego odcinka przejazdu
+SWEEP_EVERY = 1.5           # co tyle sekund bez par zbieraj scrap (0 = nigdy)
+SWEEP = True                # zbieranie trzymajac (machanie po ekranie)
+STORM_PAUSE = 0.10          # przerwa miedzy cyklami zbierania w sztormie
 IDLE = 0.05                 # przerwa, gdy nie ma czego laczyc
 GUARD = True                # pilnowanie reklam/popupow
 
@@ -104,21 +110,40 @@ def center(box):
     return box[0] + box[2] // 2, box[1] + box[3] // 2
 
 
-def collect(frame=None, verbose=True):
-    """Zbiera scrap: tap w kazde pole siatki 4x5. W sztormie tylko to wolno,
-    a siatka jest liczona z pola gry, wiec nie zalezy od kolorow beczek."""
+def sweep_path(frame, lines=None, mx=0.05, top=0.10, bottom=0.10):
+    """Tor machania po calym ekranie: poziome przejazdy tam i z powrotem.
+
+    Marginesy omijaja gorna belke i dolny pasek, zeby nie klikac w menu.
+    Zwraca liste punktow w wspolrzednych obrazu.
+    """
+    h, w = frame.shape[:2]
+    lines = lines or SWEEP_LINES
+    x0, x1 = int(w * mx), int(w * (1 - mx))
+    y0, y1 = int(h * top), int(h * (1 - bottom))
+    pts = []
+    for k in range(max(2, lines)):
+        y = int(y0 + (y1 - y0) * k / (max(2, lines) - 1))
+        row = [(x0, y), (x1, y)]
+        pts.extend(row if k % 2 == 0 else row[::-1])
+    return pts
+
+
+def collect(frame=None, verbose=True, lines=None):
+    """Zbiera scrap trzymajac: jedna dluga gestia przez caly ekran.
+
+    Gra zbiera tylko wtedy, gdy palec/kursor jest trzymany i sie rusza -
+    dlatego nie ma tu tapow, jest przejazd tam i z powrotem (sweep_path).
+    """
     frame = frame if frame is not None else grab()
-    rect = pairs.playfield_rect(frame)
-    if not rect:
-        if verbose:
-            print("[BOT] nie widze pola gry - nie zbieram")
-        return 0
-    pts = pairs.grid_centers(rect)
-    for x, y in pts:
-        tap(x, y)
-        time.sleep(TAP_GAP)
+    pts = sweep_path(frame, lines)
+    IO.hold_path(pts, seg_ms=SWEEP_SEG_MS)
+    if getattr(IO, "async_input", False):
+        # powloka tylko przyjela polecenia - poczekaj, az gra je wykona,
+        # inaczej kolejne przejazdy i merge'e ustawilyby sie w kolejce
+        time.sleep((len(pts) - 1) * SWEEP_SEG_MS / 1000.0 + 0.05)
     if verbose:
-        print(f"[BOT] sztorm: zebrane {len(pts)} pol")
+        print(f"[BOT] zbieranie: przejazd po ekranie, {len(pts)} punktow, "
+              f"{len(pts) - 1} odcinkow")
     return len(pts)
 
 
@@ -229,6 +254,7 @@ def worker_loop(forever=True):
     cur_id = None
     idx = 0
     recent = {}
+    last_sweep = t0
 
     while not STATE["stop"]:
         if STATE["paused"]:
@@ -278,6 +304,12 @@ def worker_loop(forever=True):
             continue
 
         if plan is None:
+            # brak par = dobry moment na zebranie scrapa trzymajac
+            if SWEEP and now - last_sweep >= SWEEP_EVERY:
+                collect(verbose=False)
+                last_sweep = time.time()
+                last_action = last_sweep        # zeby nie ufac staremu zrzutowi
+                continue
             time.sleep(0.01)
             continue
 
@@ -439,6 +471,7 @@ def setup_io(prefer="auto"):
 
 def main():
     global STORM_MERGE, SETTLE, ANIM, MERGE_GAP, SWIPE_MS, GUARD, BOOST
+    global SWEEP, SWEEP_LINES, SWEEP_EVERY, SWEEP_SEG_MS
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true", help="tylko pokaz plan, bez ruchu")
     ap.add_argument("--merge", type=int, default=None, help="jeden przebieg, maks. N merge'y")
@@ -458,10 +491,22 @@ def main():
     ap.add_argument("--threshold", type=float, default=pairs.SAME_THRESHOLD)
     ap.add_argument("--settle", type=float, default=None, help="czekanie po dragu (s)")
     ap.add_argument("--collect", action="store_true", help="tylko zbieraj scrap")
+    ap.add_argument("--no-sweep", action="store_true",
+                    help="nie zbieraj scrapa przy bezczynnosci")
+    ap.add_argument("--sweep-lines", type=int, default=SWEEP_LINES,
+                    help="ile przejazdow przy zbieraniu trzymajac (domyslnie 5)")
+    ap.add_argument("--sweep-every", type=float, default=SWEEP_EVERY,
+                    help="co ile sekund bez par zbierac (0 = nie zbieraj)")
+    ap.add_argument("--hold-ms", type=int, default=SWEEP_SEG_MS,
+                    help="czas jednego odcinka przejazdu przy zbieraniu (ms)")
     ap.add_argument("--storm-merge", action="store_true",
                     help="lacz takze w sztormie (po kupieniu laczenia za gwiazdy)")
     args = ap.parse_args()
 
+    SWEEP = not args.no_sweep
+    SWEEP_LINES = max(2, args.sweep_lines)
+    SWEEP_EVERY = max(0.0, args.sweep_every)
+    SWEEP_SEG_MS = max(40, args.hold_ms)
     STORM_MERGE = args.storm_merge
     GUARD = not args.no_guard
     if args.settle is not None:

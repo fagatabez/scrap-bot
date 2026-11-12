@@ -92,6 +92,7 @@ class Stream:
 class Base:
     name = "?"
     scale = 1.0                       # obraz -> wspolrzedne urzadzenia
+    async_input = False               # True = akcje tylko sie kolejka, nie czekaja
 
     def grab(self):
         raise NotImplementedError
@@ -106,6 +107,16 @@ class Base:
         """Klawisz systemowy (4 = WSTECZ). Domyslnie nic - nadpisuja go IO."""
         return None
 
+    def hold_path(self, points, seg_ms=110):
+        """Przeciagnij trzymajac przez wszystkie punkty (zbieranie scrapa).
+
+        points: [(x, y), ...] w wspolrzednych obrazu. Domyslnie kazdy odcinek
+        idzie jako osobny swipe - palec/klawisz puszcza sie miedzy odcinkami,
+        ale to i tak duzo lepsze niz pojedyncze tapy.
+        """
+        for (x1, y1), (x2, y2) in zip(points, points[1:]):
+            self.swipe(x1, y1, x2, y2, dur=seg_ms)
+
     def to_dev(self, x, y):
         return int(round(x / self.scale)), int(round(y / self.scale))
 
@@ -115,6 +126,8 @@ class Base:
 
 class ShellIO(Base):
     """Wspolna czesc: stala powloka do tapow, opcjonalny strumien zrzutow."""
+
+    async_input = True          # pisze do powloki i wraca, gra wykonuje w tle
 
     def __init__(self, popen_shell, popen_screencap, shot_path):
         self.sh = subprocess.Popen(popen_shell, stdin=subprocess.PIPE,
@@ -165,6 +178,21 @@ class ShellIO(Base):
         a = self.to_dev(x1, y1)
         b = self.to_dev(x2, y2)
         self._send(f"input swipe {a[0]} {a[1]} {b[0]} {b[1]} {int(dur)}")
+
+    def hold_path(self, points, seg_ms=110):
+        """Caly tor jednym poleceniem: powloka wykona odcinki po kolei.
+
+        Finger jest podnoszony tylko na moment miedzy odcinkami (input swipe
+        nie umie trzymac miedzy komendami), ale kazdy odcinek to prawdziwy
+        przeciag, wiec zbiera wszystko, co mija - inaczej niz 20 tapow.
+        """
+        cmds = []
+        for (x1, y1), (x2, y2) in zip(points, points[1:]):
+            a = self.to_dev(x1, y1)
+            b = self.to_dev(x2, y2)
+            cmds.append(f"input swipe {a[0]} {a[1]} {b[0]} {b[1]} {int(seg_ms)}")
+        if cmds:
+            self._send("; ".join(cmds))
 
     def key(self, code):
         self._send(f"input keyevent {code}")
@@ -239,6 +267,10 @@ class WinIO(Base):
     def swipe(self, x1, y1, x2, y2, dur=90):
         steps = max(4, int(dur / 12))
         self.win.drag(x1, y1, x2, y2, steps=steps, hold=0.01)
+
+    def hold_path(self, points, seg_ms=110):
+        """Trzyma lewy przycisk myszy przez caly tor - tak gra zbiera scrap."""
+        self.win.hold_path(points, seg_ms=seg_ms)
 
     def info(self):
         return {"backend": "win", "window": self.win.ensure_window()}

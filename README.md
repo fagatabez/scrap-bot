@@ -41,8 +41,34 @@ Zmierzone na tym komputerze:
 
 Dlatego bot nie odpala procesu na kazdy klik: trzyma jedna stala powloke
 (`adb shell` albo `su -c sh`) do tapow i jedna stala rure `screencap` do
-zrzutow. Drag trwa 90 ms, a nie 170 ms. Jeden cykl merge to ok. 200-280 ms,
-co miesci sie w oknie 0,3 s przy podwojnym respieniu.
+zrzutow. Drag trwa 75 ms, a nie 170 ms; przerwa po dragu 0,05 s, a pola
+dotkniete dragiem sa ignorowane 0,26 s (gra w tym czasie dokupuje beczke).
+W praktyce bot robi ok. 2,5-3 merge'y na sekunde, czyli szybciej niz beczka
+co 0,3 s przy podwojnym respieniu.
+
+## Zbieranie scrapa (trzymanie zamiast tapowania)
+
+Gra zbiera scrap tylko wtedy, gdy przycisk jest **trzymany i ruszany** -
+pojedyncze tapy zbieraja pojedyncze sztuki. Dlatego zbieranie to jeden dlugi
+przejazd zygzakiem po calym ekranie:
+
+* 5 poziomych przejazdow tam i z powrotem, marginesy omijaja gorna belke
+  i dolny pasek,
+* na telefonie caly tor idzie jednym poleceniem do stalej powloki
+  (`input swipe` x9) - bez podnoszenia palca miedzy odcinkami nie da sie,
+  ale kazdy odcinek to prawdziwy przeciag,
+* w oknie BlueStacks to jedna gestia myszy z trzymanym lewym przyciskiem.
+
+Bot robi ten przejazd w sztormie i wtedy, gdy przez 1,5 s nie ma czego laczyc
+(`--sweep-every`, `--sweep-lines`, `--hold-ms`; wylaczenie: `--no-sweep`).
+
+## Detekcja beczek
+
+Tlo planszy jest wykrywane z obrazu, wiec dziala przy kazdym motywie. Prog
+roznicy koloru (`BG_DIFF`) jest celowo niski: jasny, szary korpus beczki
+roznisz sie od zielonego tla tylko o ~35-40, a przy wyzszym progu szare
+beczki rozpadaly sie na dwa kawalki i znikaly z listy. Puste pole od prawdziwej
+szarej beczki odroznia czarny otwor (czapa), nie sam kolor.
 
 ## Reklamy, popupy i "szybsze beczki"
 

@@ -31,6 +31,11 @@ SAME_THRESHOLD = 0.32
 EMPTY_MAX_SAT = 32
 EMPTY_MAX_VAL = 150
 
+# ile piksel musi roznic sie od tla planszy, zeby byc czescia beczki.
+# Musi byc nisko: jasny, szary korpus beczki rozni sie od zielonego tla tylko
+# o ~35-40, a przy 45 rozpadal sie na dwa kawalki i szare beczki znikaly.
+BG_DIFF = 32
+
 # sztorm: plansza jest przyciemniona (normalnie tlo ma jasnosc ~208, w sztormie ~56)
 STORM_MAX_V = 130
 
@@ -162,7 +167,7 @@ def find_barrels(img: np.ndarray):
     bg = bg.astype(np.int16)
 
     dist = np.linalg.norm(band.astype(np.int16) - bg, axis=2)
-    mask = (dist > 45).astype(np.uint8) * 255
+    mask = (dist > BG_DIFF).astype(np.uint8) * 255
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
 
@@ -196,15 +201,23 @@ def find_barrels(img: np.ndarray):
 
 def is_empty_slot(img: np.ndarray, box, max_sat: int = EMPTY_MAX_SAT,
                   max_val: int = EMPTY_MAX_VAL) -> bool:
-    """Puste pole = szary walec: bardzo niskie nasycenie i srednia jasnosc.
-    Prawdziwe beczki maja nasycenie 75+, nawet te metaliczne sa jasniejsze."""
+    """Puste pole = szary walec bez czarnej czapy.
+
+    Uwaga: najnizsza polka beczek tez jest szara - odroznia ja czarny wierzch
+    (otwor). Dlatego najpierw sprawdzamy ciemne piksele: jesli sa, to beczka,
+    nawet gdy caly korpus jest szary i malo nasycony.
+    """
     x, y, w, h = box
     crop = barrel_crop(img, box)
     if crop.size == 0:
         return True
     s = cv2.resize(crop, (40, 40), interpolation=cv2.INTER_AREA)
-    _, sat, val = cv2.cvtColor(s, cv2.COLOR_BGR2HSV).reshape(-1, 3).mean(axis=0)
-    return sat <= max_sat and val <= max_val
+    hsv = cv2.cvtColor(s, cv2.COLOR_BGR2HSV)
+    h_, s_, v_ = cv2.split(hsv)
+    dark = float(np.count_nonzero(v_ < 60)) / v_.size
+    if dark > 0.04:                     # czarny otwor = prawdziwa beczka
+        return False
+    return float(s_.mean()) <= max_sat and float(v_.mean()) <= max_val
 
 
 # ---------------------------------------------------------------- opis
