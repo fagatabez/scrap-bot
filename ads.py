@@ -18,6 +18,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG = os.path.join(HERE, "config.json")
 CROWN = os.path.join(HERE, "assets", "boost_crown.png")
+TITLE = os.path.join(HERE, "assets", "boost_title.png")
 # szerokosc zielonego "Tak!" na zrzucie referencyjnym (481 px szerokosci)
 CROWN_REF_BTN_W = 172.0
 
@@ -62,13 +63,8 @@ def _components(mask, min_area=1):
     return out
 
 
-def find_green_button(img):
-    """Zielony przycisk z bialym napisem - zwraca (x, y) srodka albo None.
-
-    W popupie "Szybsze Beczki" zielony przycisk "Tak!" ma bialy napis.
-    Tlo gry tez jest zielone, wiec odsiewamy: szerokosc 10-55% ekranu,
-    wypelnienie > 75%, proporcje jak przycisk (1.3-5) i bialy tekst w srodku.
-    """
+def _green_boxes(img):
+    """Zielone przyciski (x, y, w, h) - z bialym napisem, jak "Tak!"."""
     h, w = img.shape[:2]
     scale = min(1.0, 480.0 / max(w, 1))
     small = (cv2.resize(img, (max(1, int(w * scale)), max(1, int(h * scale))),
@@ -77,7 +73,7 @@ def find_green_button(img):
     hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
     green = cv2.inRange(hsv, np.array([45, 130, 90]), np.array([90, 255, 255]))
     green = cv2.morphologyEx(green, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
-    best = None
+    out = []
     for x, y, bw, bh, area in _components(green, 50):
         if not (0.10 * sw <= bw <= 0.55 * sw):
             continue
@@ -93,12 +89,17 @@ def find_green_button(img):
         white = cv2.inRange(crop, np.array([0, 0, 190]), np.array([180, 70, 255]))
         if int((white > 0).sum()) < 0.008 * bw * bh:
             continue                       # brak bialego napisu - to tlo gry
-        cx, cy = x + bw // 2, y + bh // 2
-        if best is None or area > best[0]:
-            best = (area, cx, cy)
-    if best is None:
+        out.append((int(x / scale), int(y / scale), int(bw / scale), int(bh / scale)))
+    return out
+
+
+def find_green_button(img):
+    """Zielony przycisk z bialym napisem - zwraca (x, y) srodka albo None."""
+    boxes = _green_boxes(img)
+    if not boxes:
         return None
-    return (int(best[1] / scale), int(best[2] / scale))
+    x, y, w, h = max(boxes, key=lambda b: b[2] * b[3])
+    return (x + w // 2, y + h // 2)
 
 
 def find_boost_crown(img, btn_w):
@@ -127,52 +128,126 @@ def find_boost_crown(img, btn_w):
     return mx, loc, tmpl.shape[1], tmpl.shape[0]
 
 
+def _title_profile(band, buckets=24):
+    """Profil tuszu w linijce tytulu (kolumny -> 24 liczby, znormalizowane)."""
+    counts = band.sum(axis=1)
+    lines, cur = [], None
+    for i, c in enumerate(counts):
+        if c > 2:
+            cur = [i, i] if cur is None else [cur[0], i]
+        elif cur is not None:
+            lines.append(tuple(cur))
+            cur = None
+    if cur:
+        lines.append(tuple(cur))
+    if not lines:
+        return None
+    ty0, ty1 = max(lines, key=lambda ln: ln[1] - ln[0])   # tytul = najwyzsze litery
+    tband = band[ty0:ty1 + 1]
+    cols = np.where(tband.sum(axis=0) > 0)[0]
+    if len(cols) == 0:
+        return None
+    prof = tband[:, int(cols.min()):int(cols.max()) + 1].sum(axis=0).astype(np.float32)
+    edges = np.linspace(0, len(prof), buckets + 1).astype(int)
+    out = np.array([prof[a:b].sum() for a, b in zip(edges[:-1], edges[1:])], np.float32)
+    nrm = float(np.linalg.norm(out))
+    return out / nrm if nrm else out
+
+
+_TITLE_REF = None
+
+
+def _title_reference():
+    """Profil tytulu 'Szybsze Beczki' z szablonu (assets/boost_title.png)."""
+    global _TITLE_REF
+    if _TITLE_REF is None:
+        tmpl = cv2.imread(TITLE, cv2.IMREAD_GRAYSCALE)
+        prof = None
+        if tmpl is not None:
+            prof = _title_profile((tmpl > 100).astype(np.uint8))
+        _TITLE_REF = prof if prof is not None else False
+    return _TITLE_REF if _TITLE_REF is not False else None
+
+
+def title_is_boost(img, crown_bottom, btn_top, x0=0, x1=None):
+    """Czy tytul okna to "Szybsze Beczki"?
+
+    W oknie "Auto Łączenie" jest ta sama korona i ten sam uklad przyciskow -
+    roznia je tylko napis. Wiec porownujemy profil tuszu tytulu (ksztalt
+    liter) z szablonem. Tanie: 24 liczby, zero dopasowania wzorca.
+    """
+    ref = _title_reference()
+    if ref is None:
+        return True                      # brak szablonu - nie blokujemy bota
+    h, w = img.shape[:2]
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    dark = (g < 140)
+    top = max(0, int(crown_bottom))
+    bottom = min(h, int(btn_top) - 4)
+    x0 = max(0, int(x0))
+    x1 = w if x1 is None else min(w, int(x1))
+    if bottom - top < 10 or x1 - x0 < 20:
+        return False
+    prof = _title_profile(dark[top:bottom, x0:x1])
+    if prof is None:
+        return False
+    sim = float(np.dot(ref, prof) / (np.linalg.norm(ref) * np.linalg.norm(prof) + 1e-9))
+    return sim >= 0.97
+
+
 def find_boost_button(img):
     """Przycisk "Tak!" w popupie "Szybsze Beczki" albo None.
 
     Rozpoznanie jest bezpieczne: musi byc zielony przycisk z bialym napisem,
-    czerwony przycisk tego samego rozmiaru w tym samym rzedu (lewy "Nie")
-    ORAZ zlota korona z tego okna. Bez korony bot nie kliknie - w grze jest
-    kilkanaście innych okien z zielonym "Tak!" i nie chcemy klikac w sklep.
+    czerwony przycisk tego samego rozmiaru w tym samym rzedu (lewy "Nie"),
+    zlota korona z tego okna ORAZ tytul "Szybsze Beczki" (nie "Auto Laczenie"
+    - tam jest ta sama korona i ten sam uklad, ale inne okno).
     """
     green = find_green_button(img)
     if not green:
         return None
+    boxes = _green_boxes(img)
+    btn = max(boxes, key=lambda b: b[2] * b[3])
+    gx, gy = green
     h, w = img.shape[:2]
     scale = min(1.0, 480.0 / max(w, 1))
     small = (cv2.resize(img, (max(1, int(w * scale)), max(1, int(h * scale))),
                         interpolation=cv2.INTER_AREA) if scale < 1.0 else img)
     sh, sw = small.shape[:2]
-    gx, gy = green[0] * scale, green[1] * scale
+    sgx, sgy = gx * scale, gy * scale
     hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
     red = cv2.inRange(hsv, np.array([0, 130, 110]), np.array([12, 255, 255])) | \
         cv2.inRange(hsv, np.array([168, 130, 110]), np.array([180, 255, 255]))
     red = cv2.morphologyEx(red, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
-    btn_w = 0
+    ok_red = False
+    red_x0 = 0
     for x, y, bw, bh, area in _components(red, 200):
         if not (0.08 * sw <= bw <= 0.5 * sw):
             continue
         if abs(bh - 70 * sh / 558.0) > 0.10 * sh:
             continue
-        if x > gx:                        # czerwony musi byc na lewo
+        if x > sgx:                       # czerwony musi byc na lewo
             continue
-        if abs((y + bh // 2) - gy) > 0.12 * sh:
+        if abs((y + bh // 2) - sgy) > 0.12 * sh:
             continue
-        btn_w = _green_button_width(img)
+        ok_red = True
+        red_x0 = int(x / scale)
         break
-    if not btn_w:
+    if not ok_red:
         return None
-    crown = find_boost_crown(img, btn_w)
+    crown = find_boost_crown(img, btn[2])
     if not crown:
         return None
     score, (cx, cy), tw, th = crown
     if score < 0.72:
         return None
     # korona jest nad przyciskami, mniej wiecej w tym samym miejscu w poziomie
-    # (wszystkie wspolrzedne w skali pelnego obrazu)
-    if cy + th > green[1] - 0.02 * img.shape[0]:
+    if cy + th > gy - 0.02 * h:
         return None
-    if abs((cx + tw / 2) - green[0]) > 0.45 * img.shape[1]:
+    if abs((cx + tw / 2) - gx) > 0.45 * w:
+        return None
+    # tytul: "Szybsze Beczki" a nie "Auto Laczenie"
+    if not title_is_boost(img, cy + th, btn[1], red_x0, btn[0] + btn[2]):
         return None
     return green
 

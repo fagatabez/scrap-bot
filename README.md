@@ -126,15 +126,21 @@ nagrody, popup, ekran ulepszen), probuje ja odzyskac: czerwony X -> klawisz
 WSTECZ -> rogi ekranu. Wylaczenie: `--no-guard`.
 
 Bot sam tez bierze boost z okna **"Szybsze Beczki"**: rozpoznaje zielony
-przycisk "Tak!" (z bialym napisem, obok czerwonego "Nie") **plus zlota
-korone z tego okna** (szablon `assets/boost_crown.png`). Korona jest
-konieczna - w grze jest ~10 roznych okien z zielonym "Tak!" i bez niej bot
-moglby kliknac w sklep. Dopasowanie korony skaluje sie wraz z przyciskiem,
-wiec dziala na kazdej rozdzielczosci telefonu (sprawdzone w skali 0,4x-2,6x).
-Bot klika "Tak!", przewija reklame, zamyka ja i wraca do laczenia - beczki
-leca 10x szybciej przez 10 minut. Sprawdzanie okna kosztuje ~4 ms i leci raz
-na 0,4 s, wiec nie spowalnia mergowania. Wylaczenie: `--no-boost-popup`
-(albo `"popup": false` w `config.json`).
+przycisk "Tak!" (z bialym napisem, obok czerwonego "Nie"), **zlota korone**
+(szablon `assets/boost_crown.png`) **i tytul okna** (szablon
+`assets/boost_title.png`).
+
+Korona sama nie wystarcza - okno **"Auto Łączenie"** ma dokladnie ta sama
+korone, ten sam zielony "Tak!" i ten sam uklad. Rozroznia je napis w tytule,
+ktory bot porownuje jako profil ksztaltu liter (24 liczby, bez OCR). Dlatego
+bot bierze tylko "Szybsze Beczki" (10x szybciej przez 10 min), a "Auto
+Laczenie" zostawia w spokoju.
+
+Wszystko skaluje sie razem z przyciskiem, wiec dziala na kazdej rozdzielczosci
+telefonu (sprawdzone w skali 0,4x-2,6x na 6 zrzutach). Bot klika "Tak!",
+przewija reklame, zamyka ja i wraca do laczenia. Sprawdzanie okna kosztuje
+~4 ms i leci raz na 0,4 s, wiec nie spowalnia mergowania. Wylaczenie:
+`--no-boost-popup` (albo `"popup": false` w `config.json`).
 
 Przycisk boosta na planszy (stare podejscie) ustawiasz raz, klikajac go
 na zrzucie:
