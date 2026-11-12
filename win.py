@@ -173,6 +173,24 @@ def covered_fraction(hwnd=None, samples: int = 5) -> float:
     return bad / total if total else 1.0
 
 
+def _wait(sec: float):
+    """Krotkie czekanie bez zaokraglania do taktu Windows.
+
+    `time.sleep(0.004)` na Windows trwa ~4,2 ms, choc na Linuksie tyle, ile
+    podano. Przy dragu sa trzy takie przerwy na merge, wiec roznica to kilka
+    merge'y na sekunde. Do ~8 ms krecimy sie na liczniku, dluzsze czasy
+    oddajemy systemowi.
+    """
+    if sec <= 0:
+        return
+    if sec > 0.008:
+        time.sleep(sec)
+        return
+    end = time.perf_counter() + sec
+    while time.perf_counter() < end:
+        pass
+
+
 def drag(x1, y1, x2, y2, dur: int = 45, steps: int = None, hold: float = 0.005):
     """Prawdziwy drag mysza w wspolrzednych okna.
 
@@ -183,17 +201,17 @@ def drag(x1, y1, x2, y2, dur: int = 45, steps: int = None, hold: float = 0.005):
     sx1, sy1 = int(left + x1), int(top + y1)
     sx2, sy2 = int(left + x2), int(top + y2)
     if steps is None:
-        steps = max(3, int(max(abs(sx2 - sx1), abs(sy2 - sy1)) // 45))
-    per = max(0.003, (dur / 1000.0) / steps)
+        steps = max(2, int(max(abs(sx2 - sx1), abs(sy2 - sy1)) // 60))
+    per = max(0.002, (dur / 1000.0) / steps)
     user32.SetCursorPos(sx1, sy1)
-    time.sleep(0.004)
+    _wait(0.002)
     user32.mouse_event(0x0002, 0, 0, 0, 0)          # LEFTDOWN
-    time.sleep(hold)
+    _wait(hold)
     for k in range(1, steps + 1):
         user32.SetCursorPos(int(sx1 + (sx2 - sx1) * k / steps),
                             int(sy1 + (sy2 - sy1) * k / steps))
-        time.sleep(per)
-    time.sleep(hold)
+        _wait(per)
+    _wait(0.002)
     user32.mouse_event(0x0004, 0, 0, 0, 0)          # LEFTUP
 
 

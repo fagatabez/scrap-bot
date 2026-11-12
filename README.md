@@ -35,8 +35,10 @@ Zmierzone na tym komputerze:
 
 | Operacja | Czas |
 |---|---|
-| wykrycie beczek i par (obraz 900x1600) | 60 ms |
-| to samo dla zdjecia z telefonu 1260x2800 (skalowane do 900 px) | 69 ms |
+| wykrycie beczek i par (obraz 900x1600) | 10 ms |
+| to samo dla zdjecia z telefonu 1260x2800 (skalowane do 900 px) | 12 ms |
+| zrzut okna gry | 13 ms |
+| jeden drag mysza (45 ms gestii) | 55 ms |
 | uruchomienie jednego procesu `adb` | 22 ms |
 
 Dlatego bot nie odpala procesu na kazdy klik: trzyma jedna stala powloke
@@ -53,9 +55,13 @@ python bot.py --swipe-ms 35 --anim 0.12      # agresywniej, mniej pewnie
 python bot.py --swipe-ms 90 --anim 0.30      # spokojniej, pewniej
 ```
 
-Realny sufit to ~1 drag na 50-60 ms, czyli **15-20 merge'y/s** - jeden merge
+Realny sufit to ~1 drag na 55 ms, czyli **15-20 merge'y/s** - jeden merge
 to jedna gestia myszy, a gra musi ja zobaczyc i odegrac animacje. 40/s jest
 niemozliwe przy jednym wskazniku, niezaleznie od jezyka.
+
+Detekcja liczy sie na obrazie o polowe mniejszym (maska przez tablice LUT,
+`np.linalg.norm` z 7,9 ms spadl do 1,7 ms), a wspolrzedne wracaja do pelnej
+skali. Przy okno 900x1600 to 10 ms zamiast 60 ms.
 
 ## Zbieranie scrapa (trzymanie zamiast tapowania)
 
@@ -108,7 +114,15 @@ Bot laczy tylko wtedy, gdy widzi plansze gry. Gdy plansza zniknie (reklama
 nagrody, popup, ekran ulepszen), probuje ja odzyskac: czerwony X -> klawisz
 WSTECZ -> rogi ekranu. Wylaczenie: `--no-guard`.
 
-Przycisk boosta ustawiasz raz, klikajac go na zrzucie:
+Bot sam tez bierze boost z okna **"Szybsze Beczki"**: rozpoznaje zielony
+przycisk "Tak!" (z bialym napisem, obok czerwonego "Nie"), klika go, przewija
+reklame, zamyka ja i wraca do laczenia - beczki leca 10x szybciej przez
+10 minut. Sprawdzanie okna kosztuje ~4 ms i leci raz na 0,4 s, wiec nie
+spowalnia mergowania. Wylaczenie: `--no-boost-popup` (albo `"popup": false`
+w `config.json`).
+
+Przycisk boosta na planszy (stare podejscie) ustawiasz raz, klikajac go
+na zrzucie:
 
 ```powershell
 python pick.py
@@ -119,7 +133,7 @@ rozdzielczosci). Potem `python bot.py --boost`: jesli przez `idle` sekund nie
 ma czego laczyc, bot klika boost, czeka na reklame, zamyka ja i wraca do gry.
 
 ```json
-{ "boost": { "button": [0.83, 0.12], "idle": 8, "cooldown": 120 } }
+{ "boost": { "button": [0.83, 0.12], "idle": 8, "cooldown": 120, "popup": true } }
 ```
 
 ## Sterowanie z telefonu (panel webowy)

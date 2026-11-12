@@ -196,6 +196,8 @@ def collect(frame=None, verbose=True, lines=None):
 def scanner_loop():
     """Ciagle skanuje plansze i publikuje najnowsza liste par."""
     last_cover = 0.0
+    last_boost = 0.0
+    last_boost_check = 0.0
     fails = 0
     while not STATE["stop"]:
         if STATE["paused"]:
@@ -218,6 +220,19 @@ def scanner_loop():
 
             frame = grab()
             ts = time.time()
+
+            # Popup oferty "Szybsze Beczki" (zielone "Tak!" + czerwone "Nie").
+            # Jesli jest na ekranie - bierzemy boost: 10x szybsze beczki.
+            if BOOST is not None and getattr(BOOST, "popup", False) and \
+                    ts - last_boost > BOOST.cooldown and ts - last_boost_check > 0.4:
+                pos = ads.find_boost_button(frame)
+                last_boost_check = ts
+                if pos:
+                    last_boost = ts
+                    print("[BOT] popup 'Szybsze Beczki' - biore boost "
+                          "(10 min szybciej)")
+                    ads.take_boost(IO, pos)
+                    continue
             STATS["fps"] = round(1.0 / max(ts - (STATS.get("last_frame") or ts), 1e-6), 1)
             STATS["last_frame"] = ts
 
@@ -264,6 +279,12 @@ def scanner_loop():
 # ------------------------------------------------------------------ robotnik
 def _pair_key(a, b):
     return tuple(sorted(((a[0] // 30, a[1] // 30), (b[0] // 30, b[1] // 30))))
+
+
+def _near(points, p, radius):
+    """Czy w liscie srodkow jest punkt blizej niz radius od p."""
+    r2 = radius * radius
+    return any((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 <= r2 for q in points)
 
 
 def _remember_action(a, b):
@@ -383,6 +404,17 @@ def worker_loop(forever=True):
         radius = 0.45 * widths[len(widths) // 2] if widths else 45.0
         now = time.time()
 
+        # Najnowszy skan: jesli w nim nie ma juz beczki w tym miejscu, to pole
+        # zdazylo sie polaczyc/zmienic i drag bylby tylko zmarnowany (liczyl
+        # sie jako merge, ale nic nie laczyl). Sprawdzamy tylko wtedy, gdy
+        # najnowszy plan jest swiezy i ma normalna plansze.
+        with LOCK:
+            fresh = STATE["plan"]
+        fresh_ok = (fresh is not None and fresh["id"] != cur_id and
+                    now - fresh["ts"] < 0.6 and len(fresh["boxes"]) >= 6 and
+                    fresh["ts"] > last_action + SETTLE)
+        fresh_pts = [center(b) for b in fresh["boxes"]] if fresh_ok else None
+
         chosen = None
         while idx < len(prs):
             i, j, _ = prs[idx]
@@ -392,6 +424,9 @@ def worker_loop(forever=True):
             a = center(boxes[i])
             b = center(boxes[j])
             if _blocked(a, b, now, radius):
+                continue
+            if fresh_pts is not None and not (_near(fresh_pts, a, radius) and
+                                              _near(fresh_pts, b, radius)):
                 continue
             key = _pair_key(a, b)
             if now - recent.get(key, 0.0) < RETRY:
@@ -586,6 +621,8 @@ def main():
                     help="czas odcinka przy zbieraniu na telefonie (ms)")
     ap.add_argument("--storm-merge", action="store_true",
                     help="lacz takze w sztormie (po kupieniu laczenia za gwiazdy)")
+    ap.add_argument("--no-boost-popup", action="store_true",
+                    help="nie klikaj 'Tak!' w popupie 'Szybsze Beczki'")
     args = ap.parse_args()
 
     SWEEP = not args.no_sweep
@@ -619,13 +656,18 @@ def main():
     setup_io("root" if args.root else args.backend, tune=not phone_tuned)
 
     cfg = ads.load()
-    if args.boost or (cfg.get("boost") or {}).get("idle"):
-        BOOST = ads.Boost()
-        if BOOST.enabled:
-            print(f"[BOT] szybsze beczki: klik po {BOOST.idle:.0f} s bez par")
-        else:
-            print("[BOT] szybsze beczki: brak przycisku w config.json "
-                  "(ustaw przez python pick.py)")
+    bcfg = cfg.get("boost") or {}
+    if args.no_boost_popup:
+        bcfg["popup"] = False
+    BOOST = ads.Boost(bcfg)
+    if args.boost and not BOOST.button:
+        print("[BOT] szybsze beczki: brak przycisku w config.json "
+              "(ustaw przez python pick.py)")
+    if BOOST.enabled:
+        print(f"[BOT] szybsze beczki: klik po {BOOST.idle:.0f} s bez par")
+    if BOOST.popup:
+        print("[BOT] popup 'Szybsze Beczki': bot sam kliknie 'Tak!' "
+              f"(max 1 raz na {BOOST.cooldown:.0f} s)")
 
 
     if args.collect:
