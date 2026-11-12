@@ -74,6 +74,11 @@ gestia:
   magnesy rozrzucone po planszy, nie tylko te na liniach.
 * **telefon/ADB: zygzak** - kazdy odcinek to osobny proces `input`, wiec setki
   odcinkow byloby wolniejsze niz samo zbieranie.
+* **telefon z rootem (uinput): kółeczka jak na PC** - bot tworzy wirtualny
+  ekran dotykowy (`/dev/uinput`) i wysyla do niego zdarzenia `ABS_MT_*`.
+  Palec jest naprawde trzymany, wiec dzialaja te same koleczka co na
+  komputerze, a merge to jeden gest (~60 ms) zamiast kolejki procesow
+  `input swipe`. Wymaga uruchomienia bota z roota: `bash run_root.sh`.
 
 Bot robi przejazd w sztormie i wtedy, gdy przez 1,5 s nie ma czego laczyc.
 Ustawienia: `--sweep-style circles|zigzag`, `--circle-r`, `--sweep-ms`,
@@ -85,12 +90,18 @@ Telefon wykonuje jeden drag ~150-250 ms (`input swipe` = nowy proces), wiec
 zrzut, na ktorym bot planuje, zdaza sie zestarzec. Dlatego przy `root`/`adb`
 bot sam przelacza sie na spokojniejszy tryb:
 
-| Ustawienie | PC | telefon |
-|---|---|---|
-| drag | 45 ms | 120 ms |
-| czekanie po dragu | 30 ms | 120 ms |
-| blokada pola po dragu | 180 ms | 400 ms |
-| dragi z jednego zrzutu | bez limitu | 3 |
+| Ustawienie | PC | telefon (`input`) | telefon z uinput |
+|---|---|---|---|
+| drag | 45 ms | 120 ms | 60 ms |
+| czekanie po dragu | 30 ms | 120 ms | 60 ms |
+| blokada pola po dragu | 180 ms | 400 ms | 300 ms |
+| dragi z jednego zrzutu | bez limitu | 3 | bez limitu |
+| zrzut ekranu | 13 ms | ~90 ms (PNG) | ~40 ms (surowy) |
+
+Przy uinput gest jest dokladnie odmierzony i bot czeka na jego koniec, wiec
+nie ma kolejki starych polecen - dlatego mozna byc tak szybcy jak na
+komputerze. Bez roota (albo gdy uinput jest niedostepne) zostaje wariant
+`input`, ktory jest wolniejszy, ale bezpieczniejszy.
 
 Dodatkowo kazda para musi przejsc **druga bramke koloru**: srednia barwa,
 nasycenie i jasnosc obu beczek musza byc zblizone. Wczesniej wystarczyl
@@ -115,11 +126,15 @@ nagrody, popup, ekran ulepszen), probuje ja odzyskac: czerwony X -> klawisz
 WSTECZ -> rogi ekranu. Wylaczenie: `--no-guard`.
 
 Bot sam tez bierze boost z okna **"Szybsze Beczki"**: rozpoznaje zielony
-przycisk "Tak!" (z bialym napisem, obok czerwonego "Nie"), klika go, przewija
-reklame, zamyka ja i wraca do laczenia - beczki leca 10x szybciej przez
-10 minut. Sprawdzanie okna kosztuje ~4 ms i leci raz na 0,4 s, wiec nie
-spowalnia mergowania. Wylaczenie: `--no-boost-popup` (albo `"popup": false`
-w `config.json`).
+przycisk "Tak!" (z bialym napisem, obok czerwonego "Nie") **plus zlota
+korone z tego okna** (szablon `assets/boost_crown.png`). Korona jest
+konieczna - w grze jest ~10 roznych okien z zielonym "Tak!" i bez niej bot
+moglby kliknac w sklep. Dopasowanie korony skaluje sie wraz z przyciskiem,
+wiec dziala na kazdej rozdzielczosci telefonu (sprawdzone w skali 0,4x-2,6x).
+Bot klika "Tak!", przewija reklame, zamyka ja i wraca do laczenia - beczki
+leca 10x szybciej przez 10 minut. Sprawdzanie okna kosztuje ~4 ms i leci raz
+na 0,4 s, wiec nie spowalnia mergowania. Wylaczenie: `--no-boost-popup`
+(albo `"popup": false` w `config.json`).
 
 Przycisk boosta na planszy (stare podejscie) ustawiasz raz, klikajac go
 na zrzucie:
@@ -160,8 +175,13 @@ pkg install git
 git clone https://github.com/fagatabez/scrap-bot.git
 cd scrap-bot
 bash setup_termux_root.sh
-python bot.py --backend root
+bash run_root.sh          # z roota: uinput, koleczka, gesty jak na PC
 ```
+
+`run_root.sh` uruchamia bota z roota, bo `/dev/uinput` wymaga roota. Dopiero
+wtedy bot moze naprawde trzymac palec (koleczka przy zbieraniu) i robic
+merge'y jednym gestem. Bez roota (`python bot.py --root`) bot dziala, ale
+zbiera zygzakiem przez procesy `input`.
 
 Wymagania:
 - root (Magisk itp.) z przyznanym dostępem dla Termuxa,

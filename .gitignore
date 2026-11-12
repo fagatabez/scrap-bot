@@ -5,6 +5,7 @@ __pycache__/
 venv/
 *.png
 *.jpg
+!assets/*.png
 shots/
 out/
 config.json

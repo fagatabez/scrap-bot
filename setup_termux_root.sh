@@ -34,6 +34,8 @@ python -c "import cv2, numpy; print('cv2', cv2.__version__, '| numpy', numpy.__v
 echo
 echo "Gotowe. Uruchom:"
 echo "  python bot.py --root"
+echo "  bash run_root.sh        # z roota - wtedy dziala uinput (koleczka,"
+echo "                          # prawdziwy gest, merge'y jak na PC)"
 echo
 echo "Aktualizacja bota pozniej:  cd ~/scrap-bot && git pull"
 echo

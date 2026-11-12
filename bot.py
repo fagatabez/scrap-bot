@@ -174,7 +174,10 @@ def collect(frame=None, verbose=True, lines=None):
     frame = frame if frame is not None else grab()
     style = SWEEP_STYLE
     if style == "auto":
-        style = "circles" if getattr(IO, "name", "") == "win" else "zigzag"
+        # kółeczka da sie zrobic wtedy, gdy da sie naprawde trzymac palec:
+        # okno Windows albo uinput na telefonie (root)
+        style = "circles" if (getattr(IO, "name", "") == "win" or
+                              getattr(IO, "can_hold", False)) else "zigzag"
     if style == "circles":
         pts = circle_path(frame)
         total = SWEEP_MS
@@ -566,6 +569,20 @@ def setup_io(prefer="auto", tune=True):
             SWIPE_MS, SETTLE, ANIM = 120, 0.12, 0.40
             MERGE_GAP, SCAN_INTERVAL, MAX_BATCH = 0.05, 0.03, 3
             print("[BOT] telefon: drag 120 ms, max 3 dragi na jeden zrzut")
+        if getattr(IO, "can_hold", False):
+            print("[BOT] uinput: prawdziwy gest (trzymany palec) - "
+                  "koleczka i szybkie merge'y jak na PC")
+            if tune:
+                # gest przez uinput jest dokladnie odmierzony i czekamy na
+                # jego koniec - nie ma kolejki starych komend, wiec mozemy
+                # byc tak szybcy jak na komputerze
+                SWIPE_MS, SETTLE, ANIM = 60, 0.06, 0.30
+                MERGE_GAP, MAX_BATCH = 0.0, 0
+                print("[BOT] telefon z uinput: drag 60 ms, bez limitu dragow "
+                      "na zrzut")
+        elif getattr(IO, "touch_err", None):
+            print(f"[BOT] uinput niedostepne ({IO.touch_err}) - "
+                  "zbieranie zygzakiem, merge przez 'input'")
     for err in errors:
         print(f"[BOT] pominiety tryb: {err}")
     return IO.name

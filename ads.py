@@ -17,6 +17,9 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG = os.path.join(HERE, "config.json")
+CROWN = os.path.join(HERE, "assets", "boost_crown.png")
+# szerokosc zielonego "Tak!" na zrzucie referencyjnym (481 px szerokosci)
+CROWN_REF_BTN_W = 172.0
 
 
 # ---------------------------------------------------------------- config
@@ -98,13 +101,39 @@ def find_green_button(img):
     return (int(best[1] / scale), int(best[2] / scale))
 
 
+def find_boost_crown(img, btn_w):
+    """Czy w kadrze jest zlota korona z okna "Szybsze Beczki"?
+
+    Korona to jedyny element tego okna, ktorego nie ma w innych popupach
+    (w grze jest ~10 roznych okien z zielonymi przyciskami). Szablon
+    dopasowujemy w skali zielonego "Tak!" - dzieki temu dziala na kazdej
+    rozdzielczosci telefonu.
+    """
+    tmpl = cv2.imread(CROWN, cv2.IMREAD_GRAYSCALE)
+    if tmpl is None:
+        return None
+    scale = btn_w / CROWN_REF_BTN_W
+    if abs(scale - 1.0) > 0.03:
+        tmpl = cv2.resize(tmpl, (max(4, int(tmpl.shape[1] * scale)),
+                                 max(4, int(tmpl.shape[0] * scale))),
+                          interpolation=cv2.INTER_NEAREST)
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    yellow = cv2.inRange(hsv, np.array([18, 90, 120]), np.array([38, 255, 255]))
+    yellow = cv2.morphologyEx(yellow, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    if yellow.shape[0] < tmpl.shape[0] or yellow.shape[1] < tmpl.shape[1]:
+        return None
+    res = cv2.matchTemplate(yellow, tmpl, cv2.TM_CCORR_NORMED)
+    _, mx, _, loc = cv2.minMaxLoc(res)
+    return mx, loc, tmpl.shape[1], tmpl.shape[0]
+
+
 def find_boost_button(img):
     """Przycisk "Tak!" w popupie "Szybsze Beczki" albo None.
 
-    Rozpoznanie jest bezpieczne: musi byc zielony przycisk z bialym napisem
-    ORAZ czerwony przycisk tego samego rozmiaru w tym samym rzedu (lewy
-    przycisk "Nie"). Takie okno nie jest przypadkiem sklepu - tylko oferta
-    "obejrzyj reklame i zdobywaj beczki 10x szybciej".
+    Rozpoznanie jest bezpieczne: musi byc zielony przycisk z bialym napisem,
+    czerwony przycisk tego samego rozmiaru w tym samym rzedu (lewy "Nie")
+    ORAZ zlota korona z tego okna. Bez korony bot nie kliknie - w grze jest
+    kilkanaście innych okien z zielonym "Tak!" i nie chcemy klikac w sklep.
     """
     green = find_green_button(img)
     if not green:
@@ -119,6 +148,7 @@ def find_boost_button(img):
     red = cv2.inRange(hsv, np.array([0, 130, 110]), np.array([12, 255, 255])) | \
         cv2.inRange(hsv, np.array([168, 130, 110]), np.array([180, 255, 255]))
     red = cv2.morphologyEx(red, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    btn_w = 0
     for x, y, bw, bh, area in _components(red, 200):
         if not (0.08 * sw <= bw <= 0.5 * sw):
             continue
@@ -128,8 +158,41 @@ def find_boost_button(img):
             continue
         if abs((y + bh // 2) - gy) > 0.12 * sh:
             continue
-        return green
-    return None
+        btn_w = _green_button_width(img)
+        break
+    if not btn_w:
+        return None
+    crown = find_boost_crown(img, btn_w)
+    if not crown:
+        return None
+    score, (cx, cy), tw, th = crown
+    if score < 0.72:
+        return None
+    # korona jest nad przyciskami, mniej wiecej w tym samym miejscu w poziomie
+    # (wszystkie wspolrzedne w skali pelnego obrazu)
+    if cy + th > green[1] - 0.02 * img.shape[0]:
+        return None
+    if abs((cx + tw / 2) - green[0]) > 0.45 * img.shape[1]:
+        return None
+    return green
+
+
+def _green_button_width(img):
+    """Szerokosc zielonego przycisku "Tak!" w pikselach (do skali szablonu)."""
+    h, w = img.shape[:2]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    green = cv2.inRange(hsv, np.array([45, 130, 90]), np.array([90, 255, 255]))
+    green = cv2.morphologyEx(green, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    best = 0
+    for x, y, bw, bh, area in _components(green, 50):
+        if not (0.10 * w <= bw <= 0.55 * w):
+            continue
+        if area < 0.75 * bw * bh:
+            continue
+        if not (1.3 < bw / max(bh, 1) < 5.0):
+            continue
+        best = max(best, bw)
+    return best
 
 
 def take_boost(io, pos=None):
