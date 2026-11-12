@@ -23,6 +23,8 @@ mkdir -p ~/scrap-bot
 cd ~/scrap-bot
 if [ ! -d .git ]; then
   git clone https://github.com/fagatabez/scrap-bot.git .
+else
+  git pull --ff-only || echo "Nie udalo sie pobrac nowej wersji (lokalne zmiany?)"
 fi
 
 echo "== test zrzutu ekranu =="
@@ -31,6 +33,8 @@ python -c "import cv2, numpy; print('cv2', cv2.__version__, '| numpy', numpy.__v
 
 echo
 echo "Gotowe. Uruchom:"
-echo "  python bot.py --backend adb --root"
+echo "  python bot.py --root"
+echo
+echo "Aktualizacja bota pozniej:  cd ~/scrap-bot && git pull"
 echo
 echo "Gra musi być widoczna na ekranie (otwarta, telefon niezablokowany)."
