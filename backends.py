@@ -107,7 +107,7 @@ class Base:
         """Klawisz systemowy (4 = WSTECZ). Domyslnie nic - nadpisuja go IO."""
         return None
 
-    def hold_path(self, points, seg_ms=110):
+    def hold_path(self, points, seg_ms=110, total_ms=None):
         """Przeciagnij trzymajac przez wszystkie punkty (zbieranie scrapa).
 
         points: [(x, y), ...] w wspolrzednych obrazu. Domyslnie kazdy odcinek
@@ -179,7 +179,7 @@ class ShellIO(Base):
         b = self.to_dev(x2, y2)
         self._send(f"input swipe {a[0]} {a[1]} {b[0]} {b[1]} {int(dur)}")
 
-    def hold_path(self, points, seg_ms=110):
+    def hold_path(self, points, seg_ms=110, total_ms=None):
         """Caly tor jednym poleceniem: powloka wykona odcinki po kolei.
 
         Finger jest podnoszony tylko na moment miedzy odcinkami (input swipe
@@ -267,9 +267,9 @@ class WinIO(Base):
     def swipe(self, x1, y1, x2, y2, dur=90):
         self.win.drag(x1, y1, x2, y2, dur=dur)
 
-    def hold_path(self, points, seg_ms=110):
+    def hold_path(self, points, seg_ms=110, total_ms=None):
         """Trzyma lewy przycisk myszy przez caly tor - tak gra zbiera scrap."""
-        self.win.hold_path(points, seg_ms=seg_ms)
+        self.win.hold_path(points, total_ms=total_ms or (len(points) - 1) * seg_ms)
 
     def info(self):
         return {"backend": "win", "window": self.win.ensure_window()}

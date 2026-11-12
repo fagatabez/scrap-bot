@@ -14,9 +14,9 @@ Kontrola jakosci (zastepuje wolna weryfikacje po kazdym dragu):
     pojedynczy falszywy match nie zapetla bota.
 
 Sztorm (przyciemniona plansza) zatrzymuje laczenie i wlacza zbieranie scrapa:
-jedna dluga gestia „trzymaj i machaj" po calym ekranie (tor zygzakiem), a nie
-20 tapniec - gra zbiera tylko wtedy, gdy przycisk jest trzymany i sie rusza.
-Ten sam przejazd leci takze wtedy, gdy nie ma czego laczyc.
+jedna dluga gestia „trzymaj i machaj" po calym ekranie - kolka na PC,
+zygzak na telefonie - a nie 20 tapniec. Gra zbiera tylko wtedy, gdy przycisk
+jest trzymany i sie rusza. Ten sam przejazd leci takze, gdy nie ma czego laczyc.
 
 Uzycie:
     python bot.py                 # domyslnie: skaner + robotnik, F8 pauza, F9 stop
@@ -34,6 +34,7 @@ Uzycie:
 i szybkie dragi sa domyslne.
 """
 import argparse
+import math
 import threading
 import time
 
@@ -65,10 +66,15 @@ VERIFY_THRESHOLD = 0.35     # zmiana wygladu pola = merge przeszedl (tryb --once
 TAP_GAP = 0.05              # odstep miedzy tapami (juz nieuzywany w zbieraniu)
 SWEEP_LINES = 5             # ile poziomych przejazdow przy zbieraniu trzymajac
 SWEEP_SEG_MS = 110          # czas jednego odcinka przejazdu
+SWEEP_MS = 1400             # ile trwa CALY tor kolek na PC (ms)
+SWEEP_STYLE = "auto"        # auto | circles (kolka) | zigzag (zygzak)
+CIRCLE_R = 0.10             # promien kolka jako ulamek krotszego boku ekranu
+CIRCLE_OVERLAP = 0.35       # ile sasiednie kolka na siebie nachodza
 SWEEP_EVERY = 1.5           # co tyle sekund bez par zbieraj scrap (0 = nigdy)
 SWEEP = True                # zbieranie trzymajac (machanie po ekranie)
 STORM_PAUSE = 0.10          # przerwa miedzy cyklami zbierania w sztormie
 IDLE = 0.01                 # przerwa, gdy nie ma czego laczyc
+MAX_BATCH = 0               # max dragow z jednego skanu (0 = bez limitu)
 GUARD = True                # pilnowanie reklam/popupow
 
 STATE = {
@@ -128,21 +134,60 @@ def sweep_path(frame, lines=None, mx=0.05, top=0.10, bottom=0.10):
     return pts
 
 
+def circle_path(frame, r_frac=None, overlap=None):
+    """Tor zbierania koleczkami: siatka nachodzacych na siebie okregow.
+
+    Kazde kolko to 12 punktow, wiec kursor/palec faktycznie kreca - tak gra
+    zbiera magnesy rozrzucone po calym ekranie, nie tylko na liniach.
+    """
+    h, w = frame.shape[:2]
+    r = max(18, int(min(w, h) * (CIRCLE_R if r_frac is None else r_frac)))
+    ov = CIRCLE_OVERLAP if overlap is None else overlap
+    step = max(20, int(2 * r * (1.0 - ov)))
+    mx, top, bottom = 0.04, 0.10, 0.10
+    x0, x1 = int(w * mx) + r, int(w * (1 - mx)) - r
+    y0, y1 = int(h * top) + r, int(h * (1 - bottom)) - r
+    if x1 < x0:
+        x0 = x1 = w // 2
+    if y1 < y0:
+        y0 = y1 = h // 2
+    xs = list(range(x0, x1 + 1, step)) or [x0]
+    ys = list(range(y0, y1 + 1, step)) or [y0]
+    pts = []
+    n = 12
+    for row, y in enumerate(ys):
+        for cx in (xs if row % 2 == 0 else xs[::-1]):
+            for k in range(n + 1):
+                a = 2.0 * math.pi * k / n
+                pts.append((int(cx + r * math.cos(a)), int(y + r * math.sin(a))))
+    return pts
+
+
 def collect(frame=None, verbose=True, lines=None):
     """Zbiera scrap trzymajac: jedna dluga gestia przez caly ekran.
 
     Gra zbiera tylko wtedy, gdy palec/kursor jest trzymany i sie rusza -
-    dlatego nie ma tu tapow, jest przejazd tam i z powrotem (sweep_path).
+    dlatego nie ma tu tapow. Na PC tor to kolka (szybka, plynna gestia myszy),
+    na telefonie zygzak - kazdy odcinek to osobny proces `input`, wiec setki
+    odcinkow bylyby wolniejsze niz samo zbieranie.
     """
     frame = frame if frame is not None else grab()
-    pts = sweep_path(frame, lines)
-    IO.hold_path(pts, seg_ms=SWEEP_SEG_MS)
+    style = SWEEP_STYLE
+    if style == "auto":
+        style = "circles" if getattr(IO, "name", "") == "win" else "zigzag"
+    if style == "circles":
+        pts = circle_path(frame)
+        total = SWEEP_MS
+    else:
+        pts = sweep_path(frame, lines)
+        total = (len(pts) - 1) * SWEEP_SEG_MS
+    IO.hold_path(pts, seg_ms=SWEEP_SEG_MS, total_ms=total)
     if getattr(IO, "async_input", False):
         # powloka tylko przyjela polecenia - poczekaj, az gra je wykona,
         # inaczej kolejne przejazdy i merge'e ustawilyby sie w kolejce
-        time.sleep((len(pts) - 1) * SWEEP_SEG_MS / 1000.0 + 0.05)
+        time.sleep(total / 1000.0 + 0.05)
     if verbose:
-        print(f"[BOT] zbieranie: przejazd po ekranie, {len(pts)} punktow, "
+        print(f"[BOT] zbieranie: {style}, {len(pts)} punktow, "
               f"{len(pts) - 1} odcinkow")
     return len(pts)
 
@@ -258,6 +303,7 @@ def worker_loop(forever=True):
     recent = {}
     last_sweep = t0
     marks = []                  # czasy ostatnich merge'y (2 s) do tempa "teraz"
+    batch = 0                   # ile dragow poszlo z biezacego skanu
 
     while not STATE["stop"]:
         if STATE["paused"]:
@@ -322,6 +368,7 @@ def worker_loop(forever=True):
                 continue
             cur, cur_id, idx = plan, plan["id"], 0
             last_n = len(plan["boxes"])
+            batch = 0
 
         if idx >= len(cur["prs"]):
             cur = None
@@ -367,6 +414,11 @@ def worker_loop(forever=True):
         recent[key] = last_action
         last_progress = last_action
         total += 1
+        batch += 1
+        if MAX_BATCH and batch >= MAX_BATCH:
+            # telefon: nie kolejkuj kolejnych dragow na nieaktualnym zrzucie
+            cur = None
+            cur_id = None
         STATS["merges"] = total
 
         now = time.time()
@@ -447,9 +499,9 @@ def _stop():
     print("[BOT] STOP")
 
 
-def setup_io(prefer="auto"):
+def setup_io(prefer="auto", tune=True):
     """Wybierze srodowisko (root/adb/win), przygotuje IO i zwroci jego nazwe."""
-    global IO, BACKEND
+    global IO, BACKEND, SWIPE_MS, SETTLE, ANIM, MERGE_GAP, SCAN_INTERVAL, MAX_BATCH
     try:
         IO, errors = backends.detect(prefer, SHOT)
     except Exception as exc:
@@ -471,6 +523,14 @@ def setup_io(prefer="auto"):
         if getattr(IO, "stream_err", None):
             print(f"[BOT] szybki strumien zrzutow nie dziala ({IO.stream_err})"
                   " - uzywam zwyklych zrzutow")
+        if tune:
+            # Telefon: kazdy drag to proces `input` (~150-250 ms), wiec nie ma
+            # sensu kolekcjonowac ich na zapas - po 3 dragach z jednego zrzutu
+            # pola juz sie zmienily i czesc prob byla nieaktualna (falszywe
+            # laczenia). Dlatego krotsza kolejka i dluzsze czasy.
+            SWIPE_MS, SETTLE, ANIM = 120, 0.12, 0.40
+            MERGE_GAP, SCAN_INTERVAL, MAX_BATCH = 0.05, 0.03, 3
+            print("[BOT] telefon: drag 120 ms, max 3 dragi na jeden zrzut")
     for err in errors:
         print(f"[BOT] pominiety tryb: {err}")
     return IO.name
@@ -479,6 +539,7 @@ def setup_io(prefer="auto"):
 def main():
     global STORM_MERGE, SETTLE, ANIM, MERGE_GAP, SWIPE_MS, GUARD, BOOST
     global SWEEP, SWEEP_LINES, SWEEP_EVERY, SWEEP_SEG_MS, SCAN_INTERVAL
+    global SWEEP_STYLE, CIRCLE_R, SWEEP_MS, MAX_BATCH
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true", help="tylko pokaz plan, bez ruchu")
     ap.add_argument("--merge", type=int, default=None, help="jeden przebieg, maks. N merge'y")
@@ -497,44 +558,65 @@ def main():
                     help="klikaj 'szybsze beczki' (wymaga config.json z pick.py)")
     ap.add_argument("--threshold", type=float, default=pairs.SAME_THRESHOLD)
     ap.add_argument("--settle", type=float, default=None, help="czekanie po dragu (s)")
-    ap.add_argument("--swipe-ms", type=int, default=SWIPE_MS,
-                    help="czas dragu w ms (krotszy = szybciej, domyslnie 45)")
-    ap.add_argument("--gap", type=float, default=MERGE_GAP,
+    ap.add_argument("--swipe-ms", type=int, default=None,
+                    help="czas dragu w ms (krotszy = szybciej; PC 45, telefon 120)")
+    ap.add_argument("--gap", type=float, default=None,
                     help="przerwa miedzy dragami (s, domyslnie 0)")
-    ap.add_argument("--anim", type=float, default=ANIM,
+    ap.add_argument("--anim", type=float, default=None,
                     help="jak dlugo nie ufac polu po dragu (s, domyslnie 0.18)")
-    ap.add_argument("--scan", type=float, default=SCAN_INTERVAL,
+    ap.add_argument("--scan", type=float, default=None,
                     help="przerwa miedzy skanami (s, domyslnie 0)")
+    ap.add_argument("--batch", type=int, default=None,
+                    help="max dragow z jednego zrzutu (0 = bez limitu)")
     ap.add_argument("--collect", action="store_true", help="tylko zbieraj scrap")
     ap.add_argument("--no-sweep", action="store_true",
                     help="nie zbieraj scrapa przy bezczynnosci")
+    ap.add_argument("--sweep-style", choices=("auto", "circles", "zigzag"),
+                    default=SWEEP_STYLE,
+                    help="kolka czy zygzak przy zbieraniu (auto: PC=kolka, telefon=zygzak)")
+    ap.add_argument("--circle-r", type=float, default=CIRCLE_R,
+                    help="promien kolka jako ulamek krotszego boku (domyslnie 0.10)")
+    ap.add_argument("--sweep-ms", type=int, default=SWEEP_MS,
+                    help="ile ms trwa caly tor kolek (domyslnie 1400)")
     ap.add_argument("--sweep-lines", type=int, default=SWEEP_LINES,
-                    help="ile przejazdow przy zbieraniu trzymajac (domyslnie 5)")
+                    help="ile przejazdow przy zbieraniu zygzakiem (domyslnie 5)")
     ap.add_argument("--sweep-every", type=float, default=SWEEP_EVERY,
                     help="co ile sekund bez par zbierac (0 = nie zbieraj)")
     ap.add_argument("--hold-ms", type=int, default=SWEEP_SEG_MS,
-                    help="czas jednego odcinka przejazdu przy zbieraniu (ms)")
+                    help="czas odcinka przy zbieraniu na telefonie (ms)")
     ap.add_argument("--storm-merge", action="store_true",
                     help="lacz takze w sztormie (po kupieniu laczenia za gwiazdy)")
     args = ap.parse_args()
 
     SWEEP = not args.no_sweep
+    SWEEP_STYLE = args.sweep_style
+    CIRCLE_R = max(0.03, args.circle_r)
+    SWEEP_MS = max(300, args.sweep_ms)
     SWEEP_LINES = max(2, args.sweep_lines)
     SWEEP_EVERY = max(0.0, args.sweep_every)
     SWEEP_SEG_MS = max(40, args.hold_ms)
-    SWIPE_MS = max(20, args.swipe_ms)
-    MERGE_GAP = max(0.0, args.gap)
-    ANIM = max(0.08, args.anim)
-    SCAN_INTERVAL = max(0.0, args.scan)
+    if args.swipe_ms is not None:
+        SWIPE_MS = max(20, args.swipe_ms)
+    if args.gap is not None:
+        MERGE_GAP = max(0.0, args.gap)
+    if args.anim is not None:
+        ANIM = max(0.08, args.anim)
+    if args.scan is not None:
+        SCAN_INTERVAL = max(0.0, args.scan)
+    if args.batch is not None:
+        MAX_BATCH = max(0, args.batch)
     STORM_MERGE = args.storm_merge
     GUARD = not args.no_guard
+    phone_tuned = any(v is not None for v in
+                      (args.swipe_ms, args.gap, args.anim, args.scan,
+                       args.settle, args.batch)) or args.safe
     if args.settle is not None:
         SETTLE = args.settle
     elif args.safe:
         SETTLE, ANIM, MERGE_GAP, SWIPE_MS = 0.30, 0.90, 0.22, 220
     pairs.SAME_THRESHOLD = args.threshold
 
-    setup_io("root" if args.root else args.backend)
+    setup_io("root" if args.root else args.backend, tune=not phone_tuned)
 
     cfg = ads.load()
     if args.boost or (cfg.get("boost") or {}).get("idle"):

@@ -197,27 +197,35 @@ def drag(x1, y1, x2, y2, dur: int = 45, steps: int = None, hold: float = 0.005):
     user32.mouse_event(0x0004, 0, 0, 0, 0)          # LEFTUP
 
 
-def hold_path(points, seg_ms: int = 110):
+def hold_path(points, total_ms: int = 1000):
     """Trzyma lewy przycisk myszy i przeciaga po calej liscie punktow.
 
-    W grze zbieranie scrapa dziala tylko przytrzymaniem i ruszeniem kursorem,
-    wiec to jest jedna dluga gestia, a nie seria tapniec.
+    total_ms = ile ma trwac CALY tor (a nie kazdy odcinek), wiec gestia jest
+    plynna nawet przy kilkuset punktach - tak wychodza kolka przy zbieraniu.
     """
     if not points:
         return
     left, top, _, _ = client_rect(ensure_window())
     pts = [(int(left + x), int(top + y)) for x, y in points]
-    user32.SetCursorPos(*pts[0])
-    time.sleep(0.02)
-    user32.mouse_event(0x0002, 0, 0, 0, 0)              # LEFTDOWN
-    per_seg = max(0.04, seg_ms / 1000.0)
+
+    # najpierw policz kroki, zeby rozlozyc caly czas na wszystkie odcinki
+    plan = []
+    total_steps = 0
     for (sx, sy), (ex, ey) in zip(pts, pts[1:]):
-        steps = max(3, max(abs(ex - sx), abs(ey - sy)) // 25)
+        steps = max(1, max(abs(ex - sx), abs(ey - sy)) // 30)
+        plan.append((sx, sy, ex, ey, steps))
+        total_steps += steps
+    per = max(0.0005, (total_ms / 1000.0) / max(total_steps, 1))
+
+    user32.SetCursorPos(*pts[0])
+    time.sleep(0.004)
+    user32.mouse_event(0x0002, 0, 0, 0, 0)              # LEFTDOWN
+    for sx, sy, ex, ey, steps in plan:
         for k in range(1, steps + 1):
             user32.SetCursorPos(int(sx + (ex - sx) * k / steps),
                                 int(sy + (ey - sy) * k / steps))
-            time.sleep(per_seg / steps)
-    time.sleep(0.03)
+            time.sleep(per)
+    time.sleep(0.005)
     user32.mouse_event(0x0004, 0, 0, 0, 0)              # LEFTUP
 
 

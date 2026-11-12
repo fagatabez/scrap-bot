@@ -246,16 +246,44 @@ def describe_crop(crop):
     edges = cv2.resize(np.sqrt(gx * gx + gy * gy), (10, 10),
                        interpolation=cv2.INTER_AREA).flatten()
     edges = edges / (edges.mean() + 1e-6)
-    return hist, edges
+
+    # srednia barwa - druga, twarda bramka: histogram czasem uzna dwa rozne
+    # skins za podobne (ten sam uklad cieni), a sredni kolor ich rozdziela
+    mean = hsv.reshape(-1, 3).mean(axis=0).astype(np.float32)
+    return hist, edges, mean
 
 
 def distance(f1, f2):
-    h1, e1 = f1
-    h2, e2 = f2
+    h1, e1 = f1[0], f1[1]
+    h2, e2 = f2[0], f2[1]
     dh = float(cv2.compareHist(h1.reshape(-1, 1), h2.reshape(-1, 1),
                                cv2.HISTCMP_BHATTACHARYYA))
     de = float(np.abs(e1 - e2).mean())
     return 0.85 * dh + 0.15 * de
+
+
+def color_ok(f1, f2, max_hue: float = 20, max_sat: float = 45,
+             max_val: float = 55) -> bool:
+    """Czy dwa opisy maja te same barwy (nie tylko podobny histogram).
+
+    Chroni przed "falszywymi laczeniami": beczki roznych typow o zblizonym
+    ukladzie cieni mialy dystans histogramu 0.20-0.30 i bot je ciagnal.
+    """
+    if len(f1) < 3 or len(f2) < 3:
+        return True
+    h1, s1, v1 = f1[2]
+    h2, s2, v2 = f2[2]
+    if abs(float(s1) - float(s2)) > max_sat:
+        return False
+    if abs(float(v1) - float(v2)) > max_val:
+        return False
+    # barwa ma sens tylko dla kolorowych beczek (szare maja H przypadkowe)
+    if min(float(s1), float(s2)) > 30:
+        d = abs(float(h1) - float(h2))
+        d = min(d, 180.0 - d)
+        if d > max_hue:
+            return False
+    return True
 
 
 # ---------------------------------------------------------------- parowanie
@@ -271,7 +299,7 @@ def find_pairs(img: np.ndarray, threshold: float = None):
     cand = []
     for i, j in itertools.combinations(range(len(boxes)), 2):
         d = distance(feats[i], feats[j])
-        if d < threshold:
+        if d < threshold and color_ok(feats[i], feats[j]):
             cand.append((d, i, j))
     cand.sort()
 

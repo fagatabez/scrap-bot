@@ -60,18 +60,39 @@ niemozliwe przy jednym wskazniku, niezaleznie od jezyka.
 ## Zbieranie scrapa (trzymanie zamiast tapowania)
 
 Gra zbiera scrap tylko wtedy, gdy przycisk jest **trzymany i ruszany** -
-pojedyncze tapy zbieraja pojedyncze sztuki. Dlatego zbieranie to jeden dlugi
-przejazd zygzakiem po calym ekranie:
+pojedyncze tapy zbieraja pojedyncze sztuki. Dlatego zbieranie to jedna dluga
+gestia:
 
-* 5 poziomych przejazdow tam i z powrotem, marginesy omijaja gorna belke
-  i dolny pasek,
-* na telefonie caly tor idzie jednym poleceniem do stalej powloki
-  (`input swipe` x9) - bez podnoszenia palca miedzy odcinkami nie da sie,
-  ale kazdy odcinek to prawdziwy przeciag,
-* w oknie BlueStacks to jedna gestia myszy z trzymanym lewym przyciskiem.
+* **PC (okno BlueStacks): kolka** - 60 nachodzacych na siebie okregow pokrywa
+  caly ekran, kursor krecal sie po nich jednym trzymaniem (~1,4 s). To zbiera
+  magnesy rozrzucone po planszy, nie tylko te na liniach.
+* **telefon/ADB: zygzak** - kazdy odcinek to osobny proces `input`, wiec setki
+  odcinkow byloby wolniejsze niz samo zbieranie.
 
-Bot robi ten przejazd w sztormie i wtedy, gdy przez 1,5 s nie ma czego laczyc
-(`--sweep-every`, `--sweep-lines`, `--hold-ms`; wylaczenie: `--no-sweep`).
+Bot robi przejazd w sztormie i wtedy, gdy przez 1,5 s nie ma czego laczyc.
+Ustawienia: `--sweep-style circles|zigzag`, `--circle-r`, `--sweep-ms`,
+`--sweep-every`; wylaczenie: `--no-sweep`.
+
+## Telefon: mniej falszywych laczen
+
+Telefon wykonuje jeden drag ~150-250 ms (`input swipe` = nowy proces), wiec
+zrzut, na ktorym bot planuje, zdaza sie zestarzec. Dlatego przy `root`/`adb`
+bot sam przelacza sie na spokojniejszy tryb:
+
+| Ustawienie | PC | telefon |
+|---|---|---|
+| drag | 45 ms | 120 ms |
+| czekanie po dragu | 30 ms | 120 ms |
+| blokada pola po dragu | 180 ms | 400 ms |
+| dragi z jednego zrzutu | bez limitu | 3 |
+
+Dodatkowo kazda para musi przejsc **druga bramke koloru**: srednia barwa,
+nasycenie i jasnosc obu beczek musza byc zblizone. Wczesniej wystarczyl
+podobny histogram, wiec beczki roznych typow o tym samym ukladzie cieni
+(rozniaste skory, metaliki) potrafily byc ciagniete bez efektu.
+
+Wymuszenie wlasnych czasow wylacza ten automat: dowolna z opcji `--swipe-ms`,
+`--gap`, `--anim`, `--scan`, `--settle`, `--batch`, `--safe`.
 
 ## Detekcja beczek
 
