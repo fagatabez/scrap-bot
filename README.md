@@ -125,6 +125,31 @@ Bot laczy tylko wtedy, gdy widzi plansze gry. Gdy plansza zniknie (reklama
 nagrody, popup, ekran ulepszen), probuje ja odzyskac: czerwony X -> klawisz
 WSTECZ -> rogi ekranu. Wylaczenie: `--no-guard`.
 
+## Tryb "ludzki" (--human N)
+
+Bot moze sie zachowywac jak czlowiek, a nie jak maszyna:
+
+```powershell
+python bot.py --human 1        # 1% merge'ow celowo wybiera zla pare
+python bot.py --human 5        # 5% bledow
+python bot.py --human 1 --no-human-delay   # bez losowych pauz
+```
+
+Przy `--human N` bot:
+
+* z szansa N% wybiera **inna pare** niz najlepsza - merge sie nie wykona
+  (wyglada jak czlowiek, ktory sie pomylil),
+* co 4-20 merge'y robi **losowa pauze** 50-400 ms.
+
+Bez `--human` bot jest pelnomaszynowy: 0 bledow, zero pauz.
+
+## Okna gry a sztorm
+
+Pod oknem (reklama, popup, anty-macro) plansza jest **przyciemniona** i wyglada
+jak sztorm. Bot najpierw sprawdza, czy na ekranie jest jasnoszare okno
+(`ads.has_popup`) - dopiero potem uznaje ciemna plansze za sztorm. Bez tego
+bot zamiast obsluzyc okno zaczalby zbierac scrapa po nim.
+
 ## Auto ogladanie boosta (koronka w prawym gornym rogu)
 
 W grze, w prawym gornym rogu nad plansza, jest **zlota koronka** (przycisk
@@ -141,6 +166,10 @@ eventow). Klikniecie jej otwiera okno z oferta "Szybsze Beczki" albo
 Bot robi to, gdy na planszy nie ma do zlaczenia nic (najlepszy moment, bo
 reklama i tak blokuje gre). Czestotliwosc: `--boost-every` (domyslnie co
 600 s, tyle trwa boost). Wylaczenie: `--no-boost-popup`.
+
+**Uwaga: klikniecie koronki jest wylaczone domyslnie** (`--watch-offer` ja
+wlacza). Sam popup "Szybsze Beczki", jak sie pojawi sam, bot i tak obsluguje
+(kliknie "Tak!", obejrzy reklame).
 
 ## Dialog anty-macro
 

@@ -35,6 +35,7 @@ i szybkie dragi sa domyslne.
 """
 import argparse
 import math
+import random
 import threading
 import time
 
@@ -77,6 +78,9 @@ IDLE = 0.01                 # przerwa, gdy nie ma czego laczyc
 MAX_BATCH = 0               # max dragow z jednego skanu (0 = bez limitu)
 GUARD = True                # pilnowanie reklam/popupow
 BOOST_OFFER_EVERY = 600     # jak czesto klikac koronke eventow (s)
+WATCH_OFFER = False         # klikanie koronki eventow (false = nie klikamy)
+HUMAN = 0.0                 # % celowych bledow przy merge (jak w "ludzkim" bocie)
+HUMAN_DELAY = True          # losowa pauza co 4-20 merge'y
 
 STATE = {
     "plan": None,           # {"id", "ts", "boxes", "prs"}
@@ -278,7 +282,12 @@ def scanner_loop():
             STATS["fps"] = round(1.0 / max(ts - (STATS.get("last_frame") or ts), 1e-6), 1)
             STATS["last_frame"] = ts
 
-            storm = pairs.is_storm(frame) and not STORM_MERGE
+            # Okno (reklama/popup/anty-macro) przyciemnia plansze - wyglada
+            # wtedy jak sztorm. Trzeba to sprawdzic PRZED sztormem, inaczej
+            # bot zamiast obsluzyc okno zacznie zbierac scrapa.
+            popup = ads.has_popup(frame)
+
+            storm = pairs.is_storm(frame) and not STORM_MERGE and not popup
             if storm:
                 with LOCK:
                     STATE["storm"] = True
@@ -286,10 +295,10 @@ def scanner_loop():
                     STATE["serial"] += 1
             else:
                 boxes, _, prs = pairs.find_pairs(frame)
-                # malo beczek I brak planszy = reklama/popup/ekran ulepszen.
+                # okno na ekranie = reklama/popup/ekran ulepszen.
                 # Sprawdzamy plansze tylko wtedy, gdy beczek jest malo - na
                 # normalnej planszy to zbedne 25 ms na kazdy skan.
-                if GUARD and len(boxes) < 8 and not ads.looks_like_game(frame):
+                if GUARD and popup:
                     with LOCK:
                         STATE["plan"] = None
                         STATE["serial"] += 1
@@ -373,6 +382,7 @@ def worker_loop(forever=True):
     last_offer = t0           # kiedy ostatnio kliknieto koronke eventow
     marks = []                  # czasy ostatnich merge'y (2 s) do tempa "teraz"
     batch = 0                   # ile dragow poszlo z biezacego skanu
+    human_next = random.randint(4, 20)   # za ile merge'y losowa pauza
 
     while not STATE["stop"]:
         if STATE["paused"]:
@@ -425,7 +435,8 @@ def worker_loop(forever=True):
         pairs_now = len(plan["prs"]) if plan is not None else 0
         if not pairs_now:
             # brak par = dobry moment na oferte boosta (klik koronki w grze)
-            if (BOOST is not None and getattr(BOOST, "popup", False)
+            if (WATCH_OFFER and BOOST is not None
+                    and getattr(BOOST, "popup", False)
                     and plan is not None
                     and now - last_offer >= BOOST_OFFER_EVERY):
                 last_offer = now
@@ -485,6 +496,7 @@ def worker_loop(forever=True):
         fresh_pts = [center(b) for b in fresh["boxes"]] if fresh_ok else None
 
         chosen = None
+        cands = []
         while idx < len(prs):
             i, j, _ = prs[idx]
             idx += 1
@@ -500,8 +512,17 @@ def worker_loop(forever=True):
             key = _pair_key(a, b)
             if now - recent.get(key, 0.0) < RETRY:
                 continue
-            chosen = (a, b, key)
-            break
+            cands.append((a, b, key))
+            if len(cands) >= 8:
+                break
+        if cands:
+            chosen = cands[0]
+            # tryb "ludzki": czasem wybieramy inna pare niz najlepsza -
+            # merge sie nie wykona i bot wyglada jak czlowiek, nie maszyna
+            if HUMAN > 0 and len(cands) > 1 and random.random() * 100 < HUMAN:
+                chosen = random.choice(cands[1:])
+                print(f"[BOT] celowy blad ({HUMAN:g}%): merge ({chosen[0][0]},"
+                      f"{chosen[0][1]}) -> ({chosen[1][0]},{chosen[1][1]})")
 
         if chosen is None:
             cur = None
@@ -539,6 +560,14 @@ def worker_loop(forever=True):
             STATS["merges"] = total
 
         time.sleep(MERGE_GAP)                       # czas na animacje merge'a
+
+        # losowa pauza co 4-20 merge'y - tak jak w "ludzkim" bocie
+        if HUMAN_DELAY:
+            human_next -= 1
+            if human_next <= 0:
+                human_next = random.randint(4, 20)
+                time.sleep(random.uniform(0.05, 0.40))
+                last_action = time.time()
 
     return total
 
@@ -658,6 +687,7 @@ def main():
     global STORM_MERGE, SETTLE, ANIM, MERGE_GAP, SWIPE_MS, GUARD, BOOST
     global SWEEP, SWEEP_LINES, SWEEP_EVERY, SWEEP_SEG_MS, SCAN_INTERVAL
     global SWEEP_STYLE, CIRCLE_R, SWEEP_MS, MAX_BATCH, BOOST_OFFER_EVERY
+    global WATCH_OFFER, HUMAN, HUMAN_DELAY
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true", help="tylko pokaz plan, bez ruchu")
     ap.add_argument("--merge", type=int, default=None, help="jeden przebieg, maks. N merge'y")
@@ -708,6 +738,12 @@ def main():
                     help="nie klikaj 'Tak!' w popupie 'Szybsze Beczki'")
     ap.add_argument("--boost-every", type=int, default=BOOST_OFFER_EVERY,
                     help="jak czesto klikac koronke eventow po ostatnim boostie (s)")
+    ap.add_argument("--watch-offer", action="store_true",
+                    help="klikaj koronke eventow, aby ogladac oferty (domyslnie nie)")
+    ap.add_argument("--human", type=float, default=0.0,
+                    help="%% celowych bledow przy merge (np. 1 = 1%%; 0 = wylaczone)")
+    ap.add_argument("--no-human-delay", action="store_true",
+                    help="bez losowych pauz co 4-20 merge'y")
     args = ap.parse_args()
 
     SWEEP = not args.no_sweep
@@ -728,6 +764,10 @@ def main():
     if args.batch is not None:
         MAX_BATCH = max(0, args.batch)
     BOOST_OFFER_EVERY = max(30, args.boost_every)
+    WATCH_OFFER = args.watch_offer
+    HUMAN = max(0.0, min(100.0, args.human))
+    # losowe pauzy tylko razem z trybem "ludzkim"
+    HUMAN_DELAY = HUMAN > 0 and not args.no_human_delay
     STORM_MERGE = args.storm_merge
     GUARD = not args.no_guard
     phone_tuned = any(v is not None for v in

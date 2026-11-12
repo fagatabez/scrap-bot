@@ -52,6 +52,19 @@ def looks_like_game(img):
     return board_rect(img) is not None
 
 
+def has_popup(img, min_frac=0.05):
+    """Czy na ekranie jest okno (reklama, popup, anty-macro).
+
+    Okna gry sa jasnoszare (RGB w okolicach 190) - na planszy takiego koloru
+    praktycznie nie ma (<1%). Wazne: pod oknem plansza jest przyciemniona,
+    wiec wyglada jak sztorm - bez tego sprawdzenia bot zamiast obsluzyc okno
+    zaczalby zbierac scrapa.
+    """
+    b, g, r = cv2.split(img.astype(np.int16))
+    mask = (np.abs(b - g) < 12) & (np.abs(g - r) < 12) & (b > 185) & (b < 235)
+    return float(mask.mean()) > min_frac
+
+
 # ---------------------------------------------------------------- popup boost
 def _components(mask, min_area=1):
     n, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
