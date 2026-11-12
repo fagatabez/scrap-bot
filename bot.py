@@ -76,6 +76,7 @@ STORM_PAUSE = 0.10          # przerwa miedzy cyklami zbierania w sztormie
 IDLE = 0.01                 # przerwa, gdy nie ma czego laczyc
 MAX_BATCH = 0               # max dragow z jednego skanu (0 = bez limitu)
 GUARD = True                # pilnowanie reklam/popupow
+BOOST_OFFER_EVERY = 600     # jak czesto klikac koronke eventow (s)
 
 STATE = {
     "plan": None,           # {"id", "ts", "boxes", "prs"}
@@ -161,6 +162,44 @@ def circle_path(frame, r_frac=None, overlap=None):
                 a = 2.0 * math.pi * k / n
                 pts.append((int(cx + r * math.cos(a)), int(y + r * math.sin(a))))
     return pts
+
+
+def oval_path(frame, r_frac=0.20, turns=3, points=20):
+    """Tor owalnych kolek na srodku ekranu - szybkie zbieranie w sztormie.
+
+    W sztormie nie da sie laczyc, wiec gra pozwala tylko zbierac. Owalki na
+    srodku ekranu wygladaja jak "wymiatanie" myszka i zbieraja szybciej
+    niz calky ekran.
+    """
+    h, w = frame.shape[:2]
+    cx, cy = w // 2, int(h * 0.42)
+    rx = max(20, int(w * r_frac))
+    ry = max(12, int(rx * 0.55))
+    pts = []
+    for _ in range(turns):
+        for k in range(points + 1):
+            a = 2.0 * math.pi * k / points
+            pts.append((int(cx + rx * math.cos(a)), int(cy + ry * math.sin(a))))
+    return pts
+
+
+def storm_sweep(frame=None, verbose=False):
+    """Sztorm: bardzo szybkie owalne kolka na srodku ekranu.
+
+    Bez uinput kazdy odcinek to osobny proces `input`, wiec robimy wtedy
+    tylko jedno kolo (dlugie, ~1 s), a nie trzy szybkie.
+    """
+    frame = frame if frame is not None else grab()
+    fast = getattr(IO, "can_hold", False)
+    pts = oval_path(frame, turns=3 if fast else 1,
+                    points=20 if fast else 8)
+    total = max(200, len(pts) * 6) if fast else (len(pts) - 1) * SWEEP_SEG_MS
+    IO.hold_path(pts, seg_ms=SWEEP_SEG_MS, total_ms=total)
+    if getattr(IO, "async_input", False):
+        time.sleep(total / 1000.0 + 0.05)
+    if verbose:
+        print(f"[BOT] sztorm: {len(pts)} punktow, {total} ms")
+    return len(pts)
 
 
 def collect(frame=None, verbose=True, lines=None):
@@ -254,6 +293,11 @@ def scanner_loop():
                     with LOCK:
                         STATE["plan"] = None
                         STATE["serial"] += 1
+                    # dialog anty-macro (siatka 3x3) - rozwiazujemy zamiast
+                    # zamykac, bo czeka na odpowiedz
+                    if ads.solve_anti_macro(IO, frame):
+                        STATS["antimacro"] = STATS.get("antimacro", 0) + 1
+                        continue
                     if ads.close_screen(IO):
                         STATS["ads_closed"] = STATS.get("ads_closed", 0) + 1
                         print("[BOT] zamknalem reklame/popup - wracam do laczenia")
@@ -326,6 +370,7 @@ def worker_loop(forever=True):
     idx = 0
     recent = {}
     last_sweep = t0
+    last_offer = t0           # kiedy ostatnio kliknieto koronke eventow
     marks = []                  # czasy ostatnich merge'y (2 s) do tempa "teraz"
     batch = 0                   # ile dragow poszlo z biezacego skanu
 
@@ -361,7 +406,7 @@ def worker_loop(forever=True):
             if not forever:
                 print("[BOT] sztorm - koncze, w sztormie nie da sie laczyc")
                 break
-            collect(verbose=False)
+            storm_sweep(verbose=False)
             time.sleep(STORM_PAUSE)
             continue
         storm_announced = False
@@ -376,9 +421,30 @@ def worker_loop(forever=True):
             last_progress = time.time()
             continue
 
-        if plan is None:
+        # brak par (nawet jak plan istnieje) = plansza bez par do polaczenia
+        pairs_now = len(plan["prs"]) if plan is not None else 0
+        if not pairs_now:
+            # brak par = dobry moment na oferte boosta (klik koronki w grze)
+            if (BOOST is not None and getattr(BOOST, "popup", False)
+                    and plan is not None
+                    and now - last_offer >= BOOST_OFFER_EVERY):
+                last_offer = now
+                try:
+                    r = ads.watch_offer(IO)
+                except Exception as exc:
+                    print(f"[BOT] oferta: {exc}")
+                    r = None
+                if r == "tak":
+                    print("[BOT] obejrzalem reklame - beczki 10x szybciej "
+                          "przez 10 min")
+                elif r == "nie":
+                    print("[BOT] brak oferty boosta - odrzucilem")
+                last_action = time.time()
+                cur = None
+                cur_id = None
+                continue
             # brak par = dobry moment na zebranie scrapa trzymajac
-            if SWEEP and now - last_sweep >= SWEEP_EVERY:
+            if SWEEP and plan is not None and now - last_sweep >= SWEEP_EVERY:
                 collect(verbose=False)
                 last_sweep = time.time()
                 last_action = last_sweep        # zeby nie ufac staremu zrzutowi
@@ -591,7 +657,7 @@ def setup_io(prefer="auto", tune=True):
 def main():
     global STORM_MERGE, SETTLE, ANIM, MERGE_GAP, SWIPE_MS, GUARD, BOOST
     global SWEEP, SWEEP_LINES, SWEEP_EVERY, SWEEP_SEG_MS, SCAN_INTERVAL
-    global SWEEP_STYLE, CIRCLE_R, SWEEP_MS, MAX_BATCH
+    global SWEEP_STYLE, CIRCLE_R, SWEEP_MS, MAX_BATCH, BOOST_OFFER_EVERY
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true", help="tylko pokaz plan, bez ruchu")
     ap.add_argument("--merge", type=int, default=None, help="jeden przebieg, maks. N merge'y")
@@ -640,6 +706,8 @@ def main():
                     help="lacz takze w sztormie (po kupieniu laczenia za gwiazdy)")
     ap.add_argument("--no-boost-popup", action="store_true",
                     help="nie klikaj 'Tak!' w popupie 'Szybsze Beczki'")
+    ap.add_argument("--boost-every", type=int, default=BOOST_OFFER_EVERY,
+                    help="jak czesto klikac koronke eventow po ostatnim boostie (s)")
     args = ap.parse_args()
 
     SWEEP = not args.no_sweep
@@ -659,6 +727,7 @@ def main():
         SCAN_INTERVAL = max(0.0, args.scan)
     if args.batch is not None:
         MAX_BATCH = max(0, args.batch)
+    BOOST_OFFER_EVERY = max(30, args.boost_every)
     STORM_MERGE = args.storm_merge
     GUARD = not args.no_guard
     phone_tuned = any(v is not None for v in

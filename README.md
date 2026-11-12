@@ -125,7 +125,52 @@ Bot laczy tylko wtedy, gdy widzi plansze gry. Gdy plansza zniknie (reklama
 nagrody, popup, ekran ulepszen), probuje ja odzyskac: czerwony X -> klawisz
 WSTECZ -> rogi ekranu. Wylaczenie: `--no-guard`.
 
-Bot sam tez bierze boost z okna **"Szybsze Beczki"**: rozpoznaje zielony
+## Auto ogladanie boosta (koronka w prawym gornym rogu)
+
+W grze, w prawym gornym rogu nad plansza, jest **zlota koronka** (przycisk
+eventow). Klikniecie jej otwiera okno z oferta "Szybsze Beczki" albo
+"Auto Laczenie". Bot sam to robi:
+
+1. kliknie koronke (szukamy zoltej korony w prawym gornym rogu, nad plansza),
+2. jesli to okno **"Szybsze Beczki"** - kliknie zielone **"Tak!"**, przewija
+   reklame, zamyka ja i wraca do laczenia (beczki 10x szybciej przez 10 min),
+3. jesli to **inne** okno (np. "Auto Laczenie") - kliknie czerwone **"Nie"**
+   i czeka,
+4. dalej laczy beczki.
+
+Bot robi to, gdy na planszy nie ma do zlaczenia nic (najlepszy moment, bo
+reklama i tak blokuje gre). Czestotliwosc: `--boost-every` (domyslnie co
+600 s, tyle trwa boost). Wylaczenie: `--no-boost-popup`.
+
+## Dialog anty-macro
+
+Gra co jakis czas pokazuje okno "Event" z siatka 3x3: trzeba zaznaczyc
+wszystkie pola z szukana beczka. Bot:
+
+* rozpoznaje panel (jasnoszare okno z niebieskim "!" u gory),
+* znajduje szukana beczke (prawy gorny rog napisu) i porownuje jej barwe
+  z beczkami w siatce,
+* klika tylko jak dopasowanie jest **jednoznaczne** (najlepszy zawodnik
+  musi byc wyraznie lepszy od nastepnego) - inaczej nie klika nic i czeka,
+* po zaznaczeniu kliknie niebieski przycisk nagrody.
+
+Wariant z **liczbami** (sprzed wersji 6.0) wymaga OCR - bot go nie rozwiazuje
+i czeka, az rozwiazesz go recznie.
+
+Uwaga (z wiki gry): automaty i makra sa w tej grze uznawane za cheating, a
+gra ma ekran anty-cheat i moderatorow. Bot jest wiec celowo mniej "mądry"
+niz człowiek: ogranicza liczbe bledow, nie robi wszystkiego naraz.
+
+## Sztorm: szybkie owalne kolka
+
+W sztormie laczenie jest zablokowana, wiec bot zbiera itemsy: robi **szybkie
+owalne kolka na srodku ekranu** (3 owale po ~20 punktow, ~0,4 s calego
+gestu) zamiast pelnego przejazdu po ekranie. Bez uinput (telefon bez roota)
+robi jedno dlugie kolo, bo kazdy odcinek to osobny proces `input`.
+
+## Rozpoznawanie okna "Szybsze Beczki"
+
+Bot rozpoznaje okno oferty po trzech rzeczach: zielony
 przycisk "Tak!" (z bialym napisem, obok czerwonego "Nie"), **zlota korone**
 (szablon `assets/boost_crown.png`) **i tytul okna** (szablon
 `assets/boost_title.png`).
