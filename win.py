@@ -4,6 +4,7 @@ Wspolrzedne sa liczone w pikselach okna, wiec nie trzeba zadnej kalibracji
 skali - detekcja beczek i tak dziala w dowolnej rozdzielczosci.
 """
 import ctypes
+import os
 import threading
 import time
 from ctypes import wintypes
@@ -253,6 +254,41 @@ def tap(x, y):
     user32.mouse_event(0x0002, 0, 0, 0, 0)
     time.sleep(0.04)
     user32.mouse_event(0x0004, 0, 0, 0, 0)
+
+
+BACK_ARROW = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "assets", "back_arrow.png")
+
+
+def find_back_button(frame):
+    """Przycisk 'wstecz' BlueStacks w pasku na gorze okna.
+
+    Dziala jak X w reklamie (zamyka reklame), a czasem jest jedynym
+    widocznym sposobem na jej zamkniecie.
+    """
+    import cv2
+    tmpl = cv2.imread(BACK_ARROW, cv2.IMREAD_GRAYSCALE)
+    if tmpl is None:
+        return None
+    h, w = frame.shape[:2]
+    strip = frame[:max(20, int(h * 0.10))]
+    if strip.shape[0] < tmpl.shape[0] or strip.shape[1] < tmpl.shape[1]:
+        return None
+    gray = cv2.cvtColor(strip, cv2.COLOR_BGR2GRAY)
+    best = None
+    for s in (0.75, 0.9, 1.0, 1.15, 1.35):
+        t = cv2.resize(tmpl, (max(4, int(tmpl.shape[1] * s)),
+                              max(4, int(tmpl.shape[0] * s))),
+                       interpolation=cv2.INTER_AREA)
+        if gray.shape[0] < t.shape[0] or gray.shape[1] < t.shape[1]:
+            continue
+        res = cv2.matchTemplate(gray, t, cv2.TM_CCOEFF_NORMED)
+        _, mx, _, loc = cv2.minMaxLoc(res)
+        if best is None or mx > best[0]:
+            best = (mx, loc[0] + t.shape[1] // 2, loc[1] + t.shape[0] // 2)
+    if best and best[0] > 0.55:
+        return (best[1], best[2])
+    return None
 
 
 if __name__ == "__main__":

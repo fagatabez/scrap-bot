@@ -370,6 +370,20 @@ def watch_offer(io):
         io.tap(*nie)
         time.sleep(0.9)
         return "nie"
+    # okno mogl sie otworzyc z opoznieniem - sprobujmy jeszcze raz
+    time.sleep(1.0)
+    frame = io.grab()
+    tak = find_boost_button(frame)
+    if tak:
+        io.tap(*tak)
+        time.sleep(1.6)
+        close_after_ad(io)
+        return "tak"
+    nie = find_red_button(frame)
+    if nie:
+        io.tap(*nie)
+        time.sleep(0.9)
+        return "nie"
     return None
 
 
@@ -606,21 +620,27 @@ def find_close_button(img):
 
 
 def close_after_ad(io, tries=25):
-    """Reklama wlasnie leci: czekamy az sie skonczy i wracamy do gry."""
+    """Reklama wlasnie leci: czekamy az sie skonczy i wracamy do gry.
+
+    Najpierw 'wstecz' (przycisk BlueStacks / klawisz BACK) - dziala jak X,
+    a X w reklamie bywa niewidoczny. Dopiero potem szukamy X-a na ekranie.
+    """
     for i in range(tries):
         frame = io.grab()
         if looks_like_game(frame):
             return True
+        try:
+            if io.back():
+                time.sleep(1.0)
+                continue
+        except Exception:
+            pass
         pos = find_close_button(frame)
         if pos:
             io.tap(*pos)
             time.sleep(0.9)
             continue
-        if i % 3 == 2:
-            io.key(4)                       # WSTECZ zamyka wiekszosc reklam
-            time.sleep(0.9)
-        else:
-            time.sleep(1.0)
+        time.sleep(1.0)
     return False
 
 

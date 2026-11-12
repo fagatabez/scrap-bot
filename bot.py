@@ -77,10 +77,12 @@ STORM_PAUSE = 0.10          # przerwa miedzy cyklami zbierania w sztormie
 IDLE = 0.01                 # przerwa, gdy nie ma czego laczyc
 MAX_BATCH = 0               # max dragow z jednego skanu (0 = bez limitu)
 GUARD = True                # pilnowanie reklam/popupow
-BOOST_OFFER_EVERY = 600     # jak czesto klikac koronke eventow (s)
-WATCH_OFFER = False         # klikanie koronki eventow (false = nie klikamy)
+BOOST_OFFER_EVERY = 60      # jak czesto klikac koronke eventow (s)
+WATCH_OFFER = True          # klikanie koronki eventow (obserwowanie boostow)
 HUMAN = 0.0                 # % celowych bledow przy merge (jak w "ludzkim" bocie)
+HUMAN_MAX = 0               # limit merge'ow na 10 min (0 = bez limitu)
 HUMAN_DELAY = True          # losowa pauza co 4-20 merge'y
+PATTERN = True              # laczenie po wzorcu (jak czlowiek), nie "najblizsza para"
 
 STATE = {
     "plan": None,           # {"id", "ts", "boxes", "prs"}
@@ -343,6 +345,52 @@ def _near(points, p, radius):
     return any((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 <= r2 for q in points)
 
 
+def _grid(boxes):
+    """Numer rzędu i kolumny każdej beczki (plansza 4 kolumny x 5 rzędów)."""
+    if not boxes:
+        return {}
+    hs = sorted(b[3] for b in boxes)
+    row_h = hs[len(hs) // 2] or 1
+    ys = sorted((b[1] + b[3] / 2) for b in boxes)
+    rows, cur = [], [ys[0]]
+    for y in ys[1:]:
+        if y - cur[-1] > 0.7 * row_h:
+            rows.append(cur)
+            cur = []
+        cur.append(y)
+    rows.append(cur)
+    out = {}
+    for i, b in enumerate(boxes):
+        cy = b[1] + b[3] / 2
+        r = 0
+        for j, row in enumerate(rows):
+            if min(row) - 1 <= cy <= max(row) + 1:
+                r = j
+                break
+        out[i] = (r, b[0])
+    return out
+
+
+def pattern_sort(boxes, cands):
+    """Sortuje pary tak, jak łączy człowiek: sąsiednie beczki w jednym
+    rzędzie, od lewej do prawej, potem kolejny rząd.
+
+    Stały wzór = powtarzalne łączenie (tzw. speed merge w tej grze) i mniej
+    przypadkowych ruchów kursora. cands: [(a, b, key, i, j), ...]
+    """
+    grid = _grid(boxes)
+    if not grid:
+        return cands
+
+    def order(c):
+        ra = grid.get(c[3], (0, 0))
+        rb = grid.get(c[4], (0, 0))
+        same_row = 0 if ra[0] == rb[0] else 1
+        return (same_row, min(ra[0], rb[0]), min(ra[1], rb[1]))
+
+    return sorted(cands, key=order)
+
+
 def _remember_action(a, b):
     now = time.time()
     ACTIONS.append((a[0], a[1], b[0], b[1], now))
@@ -381,6 +429,7 @@ def worker_loop(forever=True):
     last_sweep = t0
     last_offer = t0           # kiedy ostatnio kliknieto koronke eventow
     marks = []                  # czasy ostatnich merge'y (2 s) do tempa "teraz"
+    pace_marks = []             # czasy merge'ow (30 s) do limitu na 10 min
     batch = 0                   # ile dragow poszlo z biezacego skanu
     human_next = random.randint(4, 20)   # za ile merge'y losowa pauza
 
@@ -431,29 +480,37 @@ def worker_loop(forever=True):
             last_progress = time.time()
             continue
 
-        # brak par (nawet jak plan istnieje) = plansza bez par do polaczenia
-        pairs_now = len(plan["prs"]) if plan is not None else 0
-        if not pairs_now:
-            # brak par = dobry moment na oferte boosta (klik koronki w grze)
-            if (WATCH_OFFER and BOOST is not None
-                    and getattr(BOOST, "popup", False)
-                    and plan is not None
-                    and now - last_offer >= BOOST_OFFER_EVERY):
-                last_offer = now
-                try:
-                    r = ads.watch_offer(IO)
-                except Exception as exc:
-                    print(f"[BOT] oferta: {exc}")
-                    r = None
-                if r == "tak":
-                    print("[BOT] obejrzalem reklame - beczki 10x szybciej "
-                          "przez 10 min")
-                elif r == "nie":
-                    print("[BOT] brak oferty boosta - odrzucilem")
+        # Obserwowanie koronki eventow: klikamy ja, jak sie pojawi, i bierzemy
+        # oferty. "Nie" sprawia, ze koronka znika na jakis czas i wraca z
+        # innym boostem - wtedy klikamy ponownie.
+        if (WATCH_OFFER and BOOST is not None
+                and getattr(BOOST, "popup", False)
+                and plan is not None
+                and now - last_offer >= BOOST_OFFER_EVERY):
+            last_offer = now
+            try:
+                r = ads.watch_offer(IO)
+            except Exception as exc:
+                print(f"[BOT] oferta: {exc}")
+                r = None
+            if r == "tak":
+                print("[BOT] obejrzalem reklame - beczki 10x szybciej "
+                      "przez 10 min")
                 last_action = time.time()
                 cur = None
                 cur_id = None
                 continue
+            if r == "nie":
+                print("[BOT] inna oferta - odrzucilem (koronka wraci pozniej)")
+                last_action = time.time()
+                cur = None
+                cur_id = None
+                continue
+            # nie ma koronki - lecimy dalej bez przestoju
+
+        # brak par (nawet jak plan istnieje) = plansza bez par do polaczenia
+        pairs_now = len(plan["prs"]) if plan is not None else 0
+        if not pairs_now:
             # brak par = dobry moment na zebranie scrapa trzymajac
             if SWEEP and plan is not None and now - last_sweep >= SWEEP_EVERY:
                 collect(verbose=False)
@@ -512,10 +569,12 @@ def worker_loop(forever=True):
             key = _pair_key(a, b)
             if now - recent.get(key, 0.0) < RETRY:
                 continue
-            cands.append((a, b, key))
+            cands.append((a, b, key, i, j))
             if len(cands) >= 8:
                 break
         if cands:
+            if PATTERN:
+                cands = pattern_sort(boxes, cands)
             chosen = cands[0]
             # tryb "ludzki": czasem wybieramy inna pare niz najlepsza -
             # merge sie nie wykona i bot wyglada jak czlowiek, nie maszyna
@@ -532,7 +591,20 @@ def worker_loop(forever=True):
             time.sleep(IDLE)
             continue
 
-        a, b, key = chosen
+        a, b, key = chosen[0], chosen[1], chosen[2]
+        # limit laczen na 10 min - jesli za szybko, troche zwolnimy
+        if HUMAN_MAX > 0:
+            nowt = time.time()
+            recent_times = [t for t in pace_marks if nowt - t <= 10.0]
+            if len(recent_times) >= 3:
+                rate = len(recent_times) / max(nowt - recent_times[0], 1.0)
+                target = HUMAN_MAX / 600.0
+                if rate > target * 0.9:
+                    delay = min(0.5, (1.0 / target) - (1.0 / max(rate, 0.01)))
+                    delay *= random.uniform(0.7, 1.4)     # losowe wahania
+                    if random.random() < 0.15:
+                        delay += random.uniform(0.05, 0.25)
+                    time.sleep(delay)
         _remember_action(a, b)                      # zanim skaner zrobi zrzut
         do_merge(a, b)
         last_action = time.time()
@@ -549,6 +621,8 @@ def worker_loop(forever=True):
         now = time.time()
         marks.append(now)
         marks[:] = [x for x in marks if now - x <= 2.0]
+        pace_marks.append(now)
+        pace_marks[:] = [x for x in pace_marks if now - x <= 30.0]
         if now - last_report >= 1.0 and total != last_total:
             span = max(now - marks[0], 0.5)
             rate = len(marks) / span            # tempo teraz, nie srednia od startu
@@ -687,7 +761,7 @@ def main():
     global STORM_MERGE, SETTLE, ANIM, MERGE_GAP, SWIPE_MS, GUARD, BOOST
     global SWEEP, SWEEP_LINES, SWEEP_EVERY, SWEEP_SEG_MS, SCAN_INTERVAL
     global SWEEP_STYLE, CIRCLE_R, SWEEP_MS, MAX_BATCH, BOOST_OFFER_EVERY
-    global WATCH_OFFER, HUMAN, HUMAN_DELAY
+    global WATCH_OFFER, HUMAN, HUMAN_DELAY, HUMAN_MAX, PATTERN
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true", help="tylko pokaz plan, bez ruchu")
     ap.add_argument("--merge", type=int, default=None, help="jeden przebieg, maks. N merge'y")
@@ -738,12 +812,15 @@ def main():
                     help="nie klikaj 'Tak!' w popupie 'Szybsze Beczki'")
     ap.add_argument("--boost-every", type=int, default=BOOST_OFFER_EVERY,
                     help="jak czesto klikac koronke eventow po ostatnim boostie (s)")
-    ap.add_argument("--watch-offer", action="store_true",
-                    help="klikaj koronke eventow, aby ogladac oferty (domyslnie nie)")
-    ap.add_argument("--human", type=float, default=0.0,
-                    help="%% celowych bledow przy merge (np. 1 = 1%%; 0 = wylaczone)")
+    ap.add_argument("--no-watch-offer", action="store_true",
+                    help="nie klikaj koronki eventow (domyslnie bot ja obserwuje)")
+    ap.add_argument("--human", nargs="+", default=None, metavar="N [MAX10MIN]",
+                    help="tryb ludzki: --human 1 (1%% bledow) albo "
+                         "--human 10 3500 (10%% bledow, maks. 3500 laczen/10 min)")
     ap.add_argument("--no-human-delay", action="store_true",
                     help="bez losowych pauz co 4-20 merge'y")
+    ap.add_argument("--no-pattern", action="store_true",
+                    help="bez wzorca: lacz najblizsza pare zamiast po ludzku")
     args = ap.parse_args()
 
     SWEEP = not args.no_sweep
@@ -764,10 +841,24 @@ def main():
     if args.batch is not None:
         MAX_BATCH = max(0, args.batch)
     BOOST_OFFER_EVERY = max(30, args.boost_every)
-    WATCH_OFFER = args.watch_offer
-    HUMAN = max(0.0, min(100.0, args.human))
+    WATCH_OFFER = not args.no_watch_offer
+    PATTERN = not args.no_pattern
+    HUMAN = 0.0
+    HUMAN_MAX = 0
+    if args.human:
+        HUMAN = max(0.0, min(100.0, float(args.human[0])))
+        if len(args.human) > 1 and args.human[1]:
+            v = str(args.human[1]).strip().lower().replace(",", "").replace(" ", "")
+            try:
+                HUMAN_MAX = int(float(v[:-1]) * 1000) if v.endswith("k") else int(float(v))
+            except ValueError:
+                print(f"[BOT] nie rozumiem limitu '{v}' - pomijam")
     # losowe pauzy tylko razem z trybem "ludzkim"
     HUMAN_DELAY = HUMAN > 0 and not args.no_human_delay
+    if HUMAN or HUMAN_MAX:
+        print(f"[BOT] tryb ludzki: bledy {HUMAN:g}%, "
+              + (f"limit {HUMAN_MAX} laczen na 10 min" if HUMAN_MAX else "bez limitu")
+              + ("" if HUMAN_DELAY else ", bez losowych pauz"))
     STORM_MERGE = args.storm_merge
     GUARD = not args.no_guard
     phone_tuned = any(v is not None for v in
@@ -823,7 +914,9 @@ def main():
         try:
             total = worker_loop(forever=not args.until_done)
         except Exception as exc:
+            import traceback
             print(f"[BOT] blad: {exc}")
+            traceback.print_exc()
     finally:
         STATE["stop"] = True
 

@@ -122,17 +122,20 @@ szarej beczki odroznia czarny otwor (czapa), nie sam kolor.
 ## Reklamy, popupy i "szybsze beczki"
 
 Bot laczy tylko wtedy, gdy widzi plansze gry. Gdy plansza zniknie (reklama
-nagrody, popup, ekran ulepszen), probuje ja odzyskac: czerwony X -> klawisz
-WSTECZ -> rogi ekranu. Wylaczenie: `--no-guard`.
+nagrody, popup, ekran ulepszen), probuje ja odzyskac. Reklame zamyka
+najpierw **przyciskiem "wstecz"** BlueStacks (dziala jak X, a X w reklamie
+bywa niewidoczny), dopiero potem czerwonym X-em na ekranie. Wylaczenie:
+`--no-guard`.
 
-## Tryb "ludzki" (--human N)
+## Tryb "ludzki" (--human N [MAX])
 
 Bot moze sie zachowywac jak czlowiek, a nie jak maszyna:
 
 ```powershell
-python bot.py --human 1        # 1% merge'ow celowo wybiera zla pare
-python bot.py --human 5        # 5% bledow
-python bot.py --human 1 --no-human-delay   # bez losowych pauz
+python bot.py --human 1          # 1% merge'ow celowo wybiera zla pare
+python bot.py --human 5          # 5% bledow
+python bot.py --human 10 3500    # 10% bledow + maks. 3500 laczen na 10 min
+python bot.py --human 10 3.5k   # to samo ("3.5k" tez dziala)
 ```
 
 Przy `--human N` bot:
@@ -141,7 +144,23 @@ Przy `--human N` bot:
   (wyglada jak czlowiek, ktory sie pomylil),
 * co 4-20 merge'y robi **losowa pauze** 50-400 ms.
 
-Bez `--human` bot jest pelnomaszynowy: 0 bledow, zero pauz.
+Drugi parametr to **limit laczen na 10 minut** (3500 = 5,8 merge'a/s). Bot
+mierzy swoje tempo i jak jest za szybki - **zwalnia**, z losowymi wahaniami
+(raz wolniej, raz szybciej, ±30%), wiec wyglada jak człowiek, a nie jak
+limitowarka. Dla porownania: normalni gracze robia ok. 3,5 tys. laczen na
+booscie w 10 min, najlepsi 4-4,5 tys.
+
+Bez `--human` bot jest pelnomaszynowy: 0 bledow, zero pauz, bez limitu.
+
+## Wzorzec laczenia (jak u ludzi)
+
+Bot nie ciagnie "najblizszej" pary - trzyma **wzorzec**: najpierw sasiednie
+beczki w jednym rzedzie, od lewej do prawej, potem kolejny rzed. Tak wlasnie
+laczna ludzie przy "speed merge" (z wiki gry: szybkie laczenie wymaga
+wlaczenia boosta "Szybsze Beczki" i laczenia po wzorcu). Efekt jest taki sam
+za kazdym razem, wiec plansza nie zaplata sie i bot nie robi dziwnych ruchow.
+
+Wylaczenie: `--no-pattern` (wtedy laczy najblizsza para).
 
 ## Okna gry a sztorm
 
@@ -163,13 +182,13 @@ eventow). Klikniecie jej otwiera okno z oferta "Szybsze Beczki" albo
    i czeka,
 4. dalej laczy beczki.
 
-Bot robi to, gdy na planszy nie ma do zlaczenia nic (najlepszy moment, bo
-reklama i tak blokuje gre). Czestotliwosc: `--boost-every` (domyslnie co
-600 s, tyle trwa boost). Wylaczenie: `--no-boost-popup`.
+Bot robi to co 60 s (`--boost-every`), o ile koronka jest widoczna. Po
+kliknieciu **"Nie"** koronka znika na jakis czas i po chwili wraca z innym
+boostem - wtedy bot znów klika. **"Szybsze Beczki"** (10x szybciej przez
+10 min) bot bierze ("Tak!" + reklama), a inne oferty odrzuca ("Nie").
 
-**Uwaga: klikniecie koronki jest wylaczone domyslnie** (`--watch-offer` ja
-wlacza). Sam popup "Szybsze Beczki", jak sie pojawi sam, bot i tak obsluguje
-(kliknie "Tak!", obejrzy reklame).
+Wylaczenie: `--no-watch-offer` (sama reklama przy "Szybsze Beczki", ktora
+pojawi sie sama, jest i tak obslugiwana).
 
 ## Dialog anty-macro
 

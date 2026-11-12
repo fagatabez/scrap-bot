@@ -179,6 +179,12 @@ class Base:
         """Klawisz systemowy (4 = WSTECZ). Domyslnie nic - nadpisuja go IO."""
         return None
 
+    def back(self):
+        """'Wstecz' - na BlueStacks zamyka reklame (jak X), na telefonie to
+        klawisz BACK."""
+        self.key(4)
+        return True
+
     def hold_path(self, points, seg_ms=110, total_ms=None):
         """Przeciagnij trzymajac przez wszystkie punkty (zbieranie scrapa).
 
@@ -399,6 +405,18 @@ class WinIO(Base):
 
     def tap(self, x, y):
         self.win.tap(x, y)
+
+    def back(self):
+        """Przycisk 'wstecz' w pasku BlueStacks - zamyka reklame jak X."""
+        try:
+            frame = self.win.grab()
+        except Exception:
+            return False
+        pos = self.win.find_back_button(frame)
+        if not pos:
+            return False
+        self.win.tap(*pos)
+        return True
 
     def swipe(self, x1, y1, x2, y2, dur=90):
         self.win.drag(x1, y1, x2, y2, dur=dur)
