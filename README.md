@@ -106,7 +106,8 @@ bash setup_termux.sh
 bash connect_phone.sh          # parowanie telefonu z samym soba
 export ADB_PATH=$(which adb)
 export ADB_DEVICE=127.0.0.1:40505
-python bot.py --backend adb`r`n```
+python bot.py --backend adb
+```
 
 ### Wariant: gra w emulatorze na PC, sterowanie z telefonu
 
@@ -115,7 +116,8 @@ emulatorem po ADB po Wi-Fi:
 
 ```bash
 export ADB_DEVICE=192.168.1.20:5555
-python bot.py --backend adb`r`n```
+python bot.py --backend adb
+```
 
 Ręcznie:
 
@@ -124,7 +126,8 @@ pkg update && pkg install python x11-repo opencv-python python-numpy android-too
 export ADB_PATH=$(which adb)
 export ADB_DEVICE=<IP_GRA>:5555     # IP komputera z emulatorem
 adb connect $ADB_DEVICE
-python bot.py --backend adb`r`n```
+python bot.py --backend adb
+```
 
 Bot łączy się z emulatorem po ADB (dodaje `adb connect` przy starcie),
 więc po jednorazowym `adb connect` nie musisz nic więcej ustawiać.
