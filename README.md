@@ -7,13 +7,61 @@ Rozpoznanie beczek jest bez biblioteki skinow - kazda beczka jest porownywana
 z kazda na tym samym zrzucie (histogram HSV + krawedzie), wiec dziala przy
 kazdej rozdzielczosci i motywie.
 
-## Szybki start (Windows, gra w BlueStacks)
+## Szybki start
 
 ```powershell
 pip install -r requirements.txt
-python bot.py            # tryb ciagly, F8 pauza, F9 stop
+python bot.py            # sam rozpozna srodowisko, F8 pauza, F9 stop
 python bot.py --dry      # tylko plan, bez dotykania gry
-python bot.py --backend adb   # sterowanie telefonem przez ADB
+python bot.py --boost    # + klikanie "szybsze beczki" (patrz nizej)
+```
+
+## Rozpoznawanie srodowiska
+
+`--backend auto` (domyslne) sprawdza po kolei i bierze pierwsze dzialajace:
+
+| Kolejnosc | Tryb | Kiedy pasuje |
+|---|---|---|
+| 1 | `root` | Termux na telefonie z rootem (`su`), gra na tym telefonie |
+| 2 | `adb` | telefon/emulator widoczny po ADB (takze `localhost:PORT`) |
+| 3 | `win` | okno BlueStacks na pulpicie (zrzut + mysz) |
+
+Wymuszenie: `--backend root|adb|win`. Bot wypisuje, co wybral, np.
+`[BOT] srodowisko: adb 127.0.0.1:5555`.
+
+## Szybkosc
+
+Zmierzone na tym komputerze:
+
+| Operacja | Czas |
+|---|---|
+| wykrycie beczek i par (obraz 900x1600) | 60 ms |
+| to samo dla zdjecia z telefonu 1260x2800 (skalowane do 900 px) | 69 ms |
+| uruchomienie jednego procesu `adb` | 22 ms |
+
+Dlatego bot nie odpala procesu na kazdy klik: trzyma jedna stala powloke
+(`adb shell` albo `su -c sh`) do tapow i jedna stala rure `screencap` do
+zrzutow. Drag trwa 90 ms, a nie 170 ms. Jeden cykl merge to ok. 200-280 ms,
+co miesci sie w oknie 0,3 s przy podwojnym respieniu.
+
+## Reklamy, popupy i "szybsze beczki"
+
+Bot laczy tylko wtedy, gdy widzi plansze gry. Gdy plansza zniknie (reklama
+nagrody, popup, ekran ulepszen), probuje ja odzyskac: czerwony X -> klawisz
+WSTECZ -> rogi ekranu. Wylaczenie: `--no-guard`.
+
+Przycisk boosta ustawiasz raz, klikajac go na zrzucie:
+
+```powershell
+python pick.py
+```
+
+Zapisuje sie w `config.json` jako ulamek planszy (dziala przy kazdej
+rozdzielczosci). Potem `python bot.py --boost`: jesli przez `idle` sekund nie
+ma czego laczyc, bot klika boost, czeka na reklame, zamyka ja i wraca do gry.
+
+```json
+{ "boost": { "button": [0.83, 0.12], "idle": 8, "cooldown": 120 } }
 ```
 
 ## Sterowanie z telefonu (panel webowy)
@@ -40,7 +88,7 @@ pkg install git
 git clone https://github.com/fagatabez/scrap-bot.git
 cd scrap-bot
 bash setup_termux_root.sh
-python bot.py --backend adb --root
+python bot.py --backend root
 ```
 
 Wymagania:
@@ -58,8 +106,7 @@ bash setup_termux.sh
 bash connect_phone.sh          # parowanie telefonu z samym soba
 export ADB_PATH=$(which adb)
 export ADB_DEVICE=127.0.0.1:40505
-python bot.py --backend adb
-```
+python bot.py --backend adb`r`n```
 
 ### Wariant: gra w emulatorze na PC, sterowanie z telefonu
 
@@ -68,8 +115,7 @@ emulatorem po ADB po Wi-Fi:
 
 ```bash
 export ADB_DEVICE=192.168.1.20:5555
-python bot.py --backend adb
-```
+python bot.py --backend adb`r`n```
 
 Ręcznie:
 
@@ -78,8 +124,7 @@ pkg update && pkg install python x11-repo opencv-python python-numpy android-too
 export ADB_PATH=$(which adb)
 export ADB_DEVICE=<IP_GRA>:5555     # IP komputera z emulatorem
 adb connect $ADB_DEVICE
-python bot.py --backend adb
-```
+python bot.py --backend adb`r`n```
 
 Bot łączy się z emulatorem po ADB (dodaje `adb connect` przy starcie),
 więc po jednorazowym `adb connect` nie musisz nic więcej ustawiać.

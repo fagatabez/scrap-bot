@@ -38,27 +38,32 @@ import time
 import os
 import tempfile
 
+import ads
+import backends
 import pairs
 
 try:                       # sterowanie oknem Windows - tylko na PC
     import win
-except Exception:          # na telefonie (Termux) dziala tylko backend adb
+except Exception:          # na telefonie (Termux) dziala tylko backend adb/root
     win = None
 
 SHOT = os.path.join(tempfile.gettempdir(), "scrap_bot_shot.png")
 
-BACKEND = "win"
+BACKEND = "auto"            # auto | root | adb | win - rozpoznawane przy starcie
+IO = None                   # obiekt wejscia/wyjscia wybrany przez backends.detect
 STORM_MERGE = False         # True po kupieniu laczenia w sztormie za gwiazdy
+SWIPE_MS = 90               # czas trwania dragu (ms) - krotszy = sztybsze laczenie
 
-SCAN_INTERVAL = 0.03        # odstep miedzy skanami planszy
-SETTLE = 0.12               # zrzut musi byc nowszy niz drag + SETTLE
-MERGE_GAP = 0.08            # przerwa miedzy kolejnymi dragami
-ANIM = 0.55                 # tyle sekund nie ufamy polom dotknietym dragiem
-RETRY = 1.5                 # ta sama para moze byc powtorzona po tym czasie
+SCAN_INTERVAL = 0.02        # odstep miedzy skanami planszy
+SETTLE = 0.06               # zrzut musi byc nowszy niz drag + SETTLE
+MERGE_GAP = 0.04            # przerwa miedzy kolejnymi dragami
+ANIM = 0.32                 # tyle sekund nie ufamy polom dotknietym dragiem
+RETRY = 1.2                 # ta sama para moze byc powtorzona po tym czasie
 VERIFY_THRESHOLD = 0.35     # zmiana wygladu pola = merge przeszedl (tryb --once)
-TAP_GAP = 0.07              # odstep miedzy tapami przy zbieraniu
-STORM_PAUSE = 0.35          # przerwa miedzy cyklami zbierania w sztormie
-IDLE = 0.10                 # przerwa, gdy nie ma czego laczyc
+TAP_GAP = 0.05              # odstep miedzy tapami przy zbieraniu
+STORM_PAUSE = 0.25          # przerwa miedzy cyklami zbierania w sztormie
+IDLE = 0.05                 # przerwa, gdy nie ma czego laczyc
+GUARD = True                # pilnowanie reklam/popupow
 
 STATE = {
     "plan": None,           # {"id", "ts", "boxes", "prs"}
@@ -74,30 +79,25 @@ STATS = {                 # statystyki na panel webowy
     "barrels": 0,
     "pairs": 0,
     "started": 0.0,
+    "fps": 0.0,
+    "backend": "?",
+    "ads_closed": 0,
 }
 LOCK = threading.Lock()
 ACTIONS = []                # ostatnie dragi: (x1, y1, x2, y2, czas)
+BOOST = None                # klikacz "szybsze beczki" (ads.Boost)
 
 
 def grab():
-    if BACKEND == "adb":
-        return pairs.screencap(SHOT)
-    return win.grab()
+    return IO.grab()
 
 
 def tap(x, y):
-    if BACKEND == "adb":
-        pairs.shell("input", "tap", str(int(x)), str(int(y)))
-    else:
-        win.tap(x, y)
+    IO.tap(x, y)
 
 
 def do_merge(a, b):
-    if BACKEND == "adb":
-        pairs.shell("input", "swipe", str(int(a[0])), str(int(a[1])),
-                    str(int(b[0])), str(int(b[1])), "170")
-    else:
-        win.drag(a[0], a[1], b[0], b[1], steps=10, hold=0.025)
+    IO.swipe(a[0], a[1], b[0], b[1], dur=SWIPE_MS)
 
 
 def center(box):
@@ -134,8 +134,8 @@ def scanner_loop():
 
         try:
             now = time.time()
-            if BACKEND == "win" and now - last_cover > 0.7:
-                cover = win.covered_fraction()
+            if IO.name == "win" and now - last_cover > 0.7:
+                cover = IO.win.covered_fraction()
                 last_cover = time.time()
                 with LOCK:
                     STATE["cover"] = cover
@@ -148,6 +148,18 @@ def scanner_loop():
 
             frame = grab()
             ts = time.time()
+            STATS["fps"] = round(1.0 / max(ts - (STATS.get("last_frame") or ts), 1e-6), 1)
+            STATS["last_frame"] = ts
+
+            # plansza nie wyglada jak gra -> reklama, popup albo ekran ulepszen
+            if GUARD and not ads.looks_like_game(frame):
+                with LOCK:
+                    STATE["plan"] = None
+                    STATE["serial"] += 1
+                if ads.close_screen(IO):
+                    STATS["ads_closed"] = STATS.get("ads_closed", 0) + 1
+                    print("[BOT] zamknalem reklame/popup - wracam do laczenia")
+                continue
 
             if pairs.is_storm(frame) and not STORM_MERGE:
                 with LOCK:
@@ -224,9 +236,9 @@ def worker_loop(forever=True):
             continue
 
         now = time.time()
-        if BACKEND == "win" and now - last_cover_check > 0.25:
+        if IO.name == "win" and now - last_cover_check > 0.25:
             last_cover_check = now
-            if win.covered_fraction() > 0.05:
+            if IO.win.covered_fraction() > 0.05:
                 if not warned_cover:
                     print("[BOT] STOP: okno gry zasloniete innym programem "
                           "- czekam, az bedzie widoczne w calosci.")
@@ -255,8 +267,18 @@ def worker_loop(forever=True):
             continue
         storm_announced = False
 
+        # brak planu przez dluzszy czas = nuda na planszy: pora na "szybsze beczki"
+        if BOOST is not None and BOOST.due(now - last_progress):
+            print("[BOT] brak par - odpalam szybsze beczki")
+            try:
+                BOOST.trigger(IO)
+            except Exception as exc:
+                print(f"[BOT] boost: {exc}")
+            last_progress = time.time()
+            continue
+
         if plan is None:
-            time.sleep(0.02)
+            time.sleep(0.01)
             continue
 
         if cur is None:
@@ -386,8 +408,37 @@ def _stop():
     print("[BOT] STOP")
 
 
+def setup_io(prefer="auto"):
+    """Wybierze srodowisko (root/adb/win), przygotuje IO i zwroci jego nazwe."""
+    global IO, BACKEND
+    try:
+        IO, errors = backends.detect(prefer, SHOT)
+    except Exception as exc:
+        raise SystemExit(
+            f"[BOT] nie znalazlem gry ({prefer}): {exc}\n"
+            "[BOT] sprawdz: czy BlueStacks dziala / czy telefon jest podlaczony "
+            "po ADB / czy Termux ma roota")
+    BACKEND = IO.name
+    STATS["backend"] = IO.name
+
+    if IO.name == "win":
+        IO.win.foreground()
+        print("[BOT] srodowisko: okno BlueStacks na pulpicie")
+    else:
+        IO.key(224)                                  # KEYCODE_WAKEUP
+        IO._send("svc power stayon true")
+        dev = getattr(IO, "device", "")
+        print(f"[BOT] srodowisko: {IO.name} {dev}".rstrip())
+        if getattr(IO, "stream_err", None):
+            print(f"[BOT] szybki strumien zrzutow nie dziala ({IO.stream_err})"
+                  " - uzywam zwyklych zrzutow")
+    for err in errors:
+        print(f"[BOT] pominiety tryb: {err}")
+    return IO.name
+
+
 def main():
-    global BACKEND, STORM_MERGE, SETTLE, ANIM, MERGE_GAP
+    global STORM_MERGE, SETTLE, ANIM, MERGE_GAP, SWIPE_MS, GUARD, BOOST
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true", help="tylko pokaz plan, bez ruchu")
     ap.add_argument("--merge", type=int, default=None, help="jeden przebieg, maks. N merge'y")
@@ -396,9 +447,14 @@ def main():
     ap.add_argument("--safe", action="store_true", help="wolniej, ale ostrozniej")
     ap.add_argument("--fast", action="store_true", help="(domyslne) szybkie dragi")
     ap.add_argument("--loop", action="store_true", help="(domyslne) praca ciagla")
-    ap.add_argument("--backend", choices=("win", "adb"), default="win")
+    ap.add_argument("--backend", choices=("auto", "win", "adb", "root"), default="auto",
+                    help="auto = sam rozpozna telefon/ADB/okno BlueStacks")
     ap.add_argument("--root", action="store_true",
-                    help="telefon z rootem: zrzut i tapy przez su, bez ADB")
+                    help="skrot: telefon z rootem, bez ADB")
+    ap.add_argument("--no-guard", action="store_true",
+                    help="nie zamykaj reklam i popupow")
+    ap.add_argument("--boost", action="store_true",
+                    help="klikaj 'szybsze beczki' (wymaga config.json z pick.py)")
     ap.add_argument("--threshold", type=float, default=pairs.SAME_THRESHOLD)
     ap.add_argument("--settle", type=float, default=None, help="czekanie po dragu (s)")
     ap.add_argument("--collect", action="store_true", help="tylko zbieraj scrap")
@@ -406,29 +462,28 @@ def main():
                     help="lacz takze w sztormie (po kupieniu laczenia za gwiazdy)")
     args = ap.parse_args()
 
-    BACKEND = args.backend
     STORM_MERGE = args.storm_merge
-    if args.backend == "adb" and args.root:
-        pairs.USE_ROOT = True
-    if BACKEND == "adb" and pairs.USE_ROOT:
-        # telefon: ekran musi byc wlaczony, inaczej screencap zwraca pustke
-        pairs.shell("input", "keyevent", "KEYCODE_WAKEUP")
-        pairs.shell("svc", "power", "stayon", "true")
+    GUARD = not args.no_guard
     if args.settle is not None:
         SETTLE = args.settle
     elif args.safe:
-        SETTLE, ANIM, MERGE_GAP = 0.30, 0.90, 0.22
+        SETTLE, ANIM, MERGE_GAP, SWIPE_MS = 0.30, 0.90, 0.22, 220
     pairs.SAME_THRESHOLD = args.threshold
 
+    setup_io("root" if args.root else args.backend)
+
+    cfg = ads.load()
+    if args.boost or (cfg.get("boost") or {}).get("idle"):
+        BOOST = ads.Boost()
+        if BOOST.enabled:
+            print(f"[BOT] szybsze beczki: klik po {BOOST.idle:.0f} s bez par")
+        else:
+            print("[BOT] szybsze beczki: brak przycisku w config.json "
+                  "(ustaw przez python pick.py)")
+
+
     if args.collect:
-        prev = win.foreground_hwnd() if BACKEND == "win" else None
-        if BACKEND == "win":
-            win.foreground()
-        try:
-            collect()
-        finally:
-            if BACKEND == "win":
-                win.restore_foreground(prev)
+        collect()
         return
 
     if args.dry:
@@ -436,29 +491,17 @@ def main():
         return
 
     if args.once or args.merge is not None:
-        prev = win.foreground_hwnd() if BACKEND == "win" else None
-        if BACKEND == "win":
-            win.foreground()
-        try:
-            merge_pass(args.merge, dry=False, verbose=True)
-        finally:
-            if BACKEND == "win":
-                win.restore_foreground(prev)
+        merge_pass(args.merge, dry=False, verbose=True)
         return
-
-    prev = win.foreground_hwnd() if BACKEND == "win" else None
-    if BACKEND == "win":
-        win.foreground()
-        time.sleep(0.15)
 
     total = 0
     try:
-        try:                            # skróty klawiszowe tylko na PC
+        try:                            # skroty klawiszowe tylko na PC
             import keyboard
             keyboard.add_hotkey("f8", _toggle)
             keyboard.add_hotkey("f9", _stop)
         except Exception:
-            print("[BOT] brak modulu 'keyboard' - sterowanie tylko z panelu/ADB")
+            pass
 
         scanner = threading.Thread(target=scanner_loop, daemon=True)
         scanner.start()
@@ -469,8 +512,6 @@ def main():
             print(f"[BOT] blad: {exc}")
     finally:
         STATE["stop"] = True
-        if BACKEND == "win":
-            win.restore_foreground(prev)
 
     print(f"[BOT] koniec. Merge'y: {total}")
 

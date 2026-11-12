@@ -188,10 +188,14 @@ def local_ip():
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("--backend", choices=("win", "adb"), default="win")
+    ap.add_argument("--backend", choices=("auto", "win", "adb", "root"), default="auto")
     ap.add_argument("--port", type=int, default=PORT)
     args = ap.parse_args()
-    bot.BACKEND = args.backend
+    try:
+        bot.setup_io(args.backend)
+    except Exception as exc:
+        print(f"[SERWER] nie znalazlem gry: {exc}")
+        print("[SERWER] panel wystartuje, ale START zwroci blad")
     ip = local_ip()
     print(f"[SERWER] panel: http://{ip}:{args.port}")
     print(f"[SERWER] na telefonie otworz: http://{ip}:{args.port}")
