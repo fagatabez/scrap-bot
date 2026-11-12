@@ -173,19 +173,26 @@ def covered_fraction(hwnd=None, samples: int = 5) -> float:
     return bad / total if total else 1.0
 
 
-def drag(x1, y1, x2, y2, steps: int = 14, hold: float = 0.05):
-    """Prawdziwy drag mysza w wspolrzednych okna."""
+def drag(x1, y1, x2, y2, dur: int = 45, steps: int = None, hold: float = 0.005):
+    """Prawdziwy drag mysza w wspolrzednych okna.
+
+    dur = ile ms ma trwac ruch (bez klikniecia i puszczenia). Krotszy drag =
+    wiecej merge'y na sekunde, ale gra musi zdazyc zobaczyc ruch.
+    """
     left, top, _, _ = client_rect(ensure_window())
     sx1, sy1 = int(left + x1), int(top + y1)
     sx2, sy2 = int(left + x2), int(top + y2)
+    if steps is None:
+        steps = max(3, int(max(abs(sx2 - sx1), abs(sy2 - sy1)) // 45))
+    per = max(0.003, (dur / 1000.0) / steps)
     user32.SetCursorPos(sx1, sy1)
-    time.sleep(0.03)
+    time.sleep(0.004)
     user32.mouse_event(0x0002, 0, 0, 0, 0)          # LEFTDOWN
     time.sleep(hold)
     for k in range(1, steps + 1):
         user32.SetCursorPos(int(sx1 + (sx2 - sx1) * k / steps),
                             int(sy1 + (sy2 - sy1) * k / steps))
-        time.sleep(0.008)
+        time.sleep(per)
     time.sleep(hold)
     user32.mouse_event(0x0004, 0, 0, 0, 0)          # LEFTUP
 

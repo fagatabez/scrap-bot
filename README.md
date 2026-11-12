@@ -41,10 +41,21 @@ Zmierzone na tym komputerze:
 
 Dlatego bot nie odpala procesu na kazdy klik: trzyma jedna stala powloke
 (`adb shell` albo `su -c sh`) do tapow i jedna stala rure `screencap` do
-zrzutow. Drag trwa 75 ms, a nie 170 ms; przerwa po dragu 0,05 s, a pola
-dotkniete dragiem sa ignorowane 0,26 s (gra w tym czasie dokupuje beczke).
-W praktyce bot robi ok. 2,5-3 merge'y na sekunde, czyli szybciej niz beczka
-co 0,3 s przy podwojnym respieniu.
+zrzutow. Drag trwa 45 ms, przerwa po dragu 0,03 s, miedzy dragami 0 s, a pola
+dotkniete dragiem sa ignorowane 0,18 s (gra w tym czasie dokupuje beczke).
+Skan nie ma juz sztywnej pauzy i nie liczy pola gry, gdy widzi >= 8 beczek.
+
+Tempo ustawisz bez zmiany kodu:
+
+```powershell
+python bot.py --swipe-ms 45 --gap 0 --anim 0.18 --scan 0
+python bot.py --swipe-ms 35 --anim 0.12      # agresywniej, mniej pewnie
+python bot.py --swipe-ms 90 --anim 0.30      # spokojniej, pewniej
+```
+
+Realny sufit to ~1 drag na 50-60 ms, czyli **15-20 merge'y/s** - jeden merge
+to jedna gestia myszy, a gra musi ja zobaczyc i odegrac animacje. 40/s jest
+niemozliwe przy jednym wskazniku, niezaleznie od jezyka.
 
 ## Zbieranie scrapa (trzymanie zamiast tapowania)
 

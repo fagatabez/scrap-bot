@@ -265,8 +265,7 @@ class WinIO(Base):
         self.win.tap(x, y)
 
     def swipe(self, x1, y1, x2, y2, dur=90):
-        steps = max(4, int(dur / 12))
-        self.win.drag(x1, y1, x2, y2, steps=steps, hold=0.01)
+        self.win.drag(x1, y1, x2, y2, dur=dur)
 
     def hold_path(self, points, seg_ms=110):
         """Trzyma lewy przycisk myszy przez caly tor - tak gra zbiera scrap."""

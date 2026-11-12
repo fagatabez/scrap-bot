@@ -54,12 +54,12 @@ SHOT = os.path.join(tempfile.gettempdir(), "scrap_bot_shot.png")
 BACKEND = "auto"            # auto | root | adb | win - rozpoznawane przy starcie
 IO = None                   # obiekt wejscia/wyjscia wybrany przez backends.detect
 STORM_MERGE = False         # True po kupieniu laczenia w sztormie za gwiazdy
-SWIPE_MS = 75               # czas trwania dragu (ms) - krotszy = szybsze laczenie
+SWIPE_MS = 45               # czas trwania dragu (ms) - krotszy = szybsze laczenie
 
-SCAN_INTERVAL = 0.015       # odstep miedzy skanami planszy
-SETTLE = 0.05               # zrzut musi byc nowszy niz drag + SETTLE
-MERGE_GAP = 0.03            # przerwa miedzy kolejnymi dragami
-ANIM = 0.26                 # tyle sekund nie ufamy polom dotknietym dragiem
+SCAN_INTERVAL = 0.0         # odstep miedzy skanami planszy
+SETTLE = 0.03               # zrzut musi byc nowszy niz drag + SETTLE
+MERGE_GAP = 0.0             # przerwa miedzy kolejnymi dragami
+ANIM = 0.18                 # tyle sekund nie ufamy polom dotknietym dragiem
 RETRY = 1.2                 # ta sama para moze byc powtorzona po tym czasie
 VERIFY_THRESHOLD = 0.35     # zmiana wygladu pola = merge przeszedl (tryb --once)
 TAP_GAP = 0.05              # odstep miedzy tapami (juz nieuzywany w zbieraniu)
@@ -68,7 +68,7 @@ SWEEP_SEG_MS = 110          # czas jednego odcinka przejazdu
 SWEEP_EVERY = 1.5           # co tyle sekund bez par zbieraj scrap (0 = nigdy)
 SWEEP = True                # zbieranie trzymajac (machanie po ekranie)
 STORM_PAUSE = 0.10          # przerwa miedzy cyklami zbierania w sztormie
-IDLE = 0.05                 # przerwa, gdy nie ma czego laczyc
+IDLE = 0.01                 # przerwa, gdy nie ma czego laczyc
 GUARD = True                # pilnowanie reklam/popupow
 
 STATE = {
@@ -176,23 +176,25 @@ def scanner_loop():
             STATS["fps"] = round(1.0 / max(ts - (STATS.get("last_frame") or ts), 1e-6), 1)
             STATS["last_frame"] = ts
 
-            # plansza nie wyglada jak gra -> reklama, popup albo ekran ulepszen
-            if GUARD and not ads.looks_like_game(frame):
-                with LOCK:
-                    STATE["plan"] = None
-                    STATE["serial"] += 1
-                if ads.close_screen(IO):
-                    STATS["ads_closed"] = STATS.get("ads_closed", 0) + 1
-                    print("[BOT] zamknalem reklame/popup - wracam do laczenia")
-                continue
-
-            if pairs.is_storm(frame) and not STORM_MERGE:
+            storm = pairs.is_storm(frame) and not STORM_MERGE
+            if storm:
                 with LOCK:
                     STATE["storm"] = True
                     STATE["plan"] = None
                     STATE["serial"] += 1
             else:
                 boxes, _, prs = pairs.find_pairs(frame)
+                # malo beczek I brak planszy = reklama/popup/ekran ulepszen.
+                # Sprawdzamy plansze tylko wtedy, gdy beczek jest malo - na
+                # normalnej planszy to zbedne 25 ms na kazdy skan.
+                if GUARD and len(boxes) < 8 and not ads.looks_like_game(frame):
+                    with LOCK:
+                        STATE["plan"] = None
+                        STATE["serial"] += 1
+                    if ads.close_screen(IO):
+                        STATS["ads_closed"] = STATS.get("ads_closed", 0) + 1
+                        print("[BOT] zamknalem reklame/popup - wracam do laczenia")
+                    continue
                 with LOCK:
                     STATE["storm"] = False
                     STATE["serial"] += 1
@@ -255,6 +257,7 @@ def worker_loop(forever=True):
     idx = 0
     recent = {}
     last_sweep = t0
+    marks = []                  # czasy ostatnich merge'y (2 s) do tempa "teraz"
 
     while not STATE["stop"]:
         if STATE["paused"]:
@@ -367,9 +370,13 @@ def worker_loop(forever=True):
         STATS["merges"] = total
 
         now = time.time()
+        marks.append(now)
+        marks[:] = [x for x in marks if now - x <= 2.0]
         if now - last_report >= 1.0 and total != last_total:
-            rate = total / max(now - t0, 1e-6)
-            print(f"[BOT] merge'y: {total} | {rate:.2f}/s | beczek: {last_n}")
+            span = max(now - marks[0], 0.5)
+            rate = len(marks) / span            # tempo teraz, nie srednia od startu
+            print(f"[BOT] merge'y: {total} | {rate:.1f}/s teraz | "
+                  f"beczek: {last_n} | par: {len(boxes)}")
             last_report = now
             last_total = total
             STATS["rate"] = rate
@@ -471,7 +478,7 @@ def setup_io(prefer="auto"):
 
 def main():
     global STORM_MERGE, SETTLE, ANIM, MERGE_GAP, SWIPE_MS, GUARD, BOOST
-    global SWEEP, SWEEP_LINES, SWEEP_EVERY, SWEEP_SEG_MS
+    global SWEEP, SWEEP_LINES, SWEEP_EVERY, SWEEP_SEG_MS, SCAN_INTERVAL
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true", help="tylko pokaz plan, bez ruchu")
     ap.add_argument("--merge", type=int, default=None, help="jeden przebieg, maks. N merge'y")
@@ -490,6 +497,14 @@ def main():
                     help="klikaj 'szybsze beczki' (wymaga config.json z pick.py)")
     ap.add_argument("--threshold", type=float, default=pairs.SAME_THRESHOLD)
     ap.add_argument("--settle", type=float, default=None, help="czekanie po dragu (s)")
+    ap.add_argument("--swipe-ms", type=int, default=SWIPE_MS,
+                    help="czas dragu w ms (krotszy = szybciej, domyslnie 45)")
+    ap.add_argument("--gap", type=float, default=MERGE_GAP,
+                    help="przerwa miedzy dragami (s, domyslnie 0)")
+    ap.add_argument("--anim", type=float, default=ANIM,
+                    help="jak dlugo nie ufac polu po dragu (s, domyslnie 0.18)")
+    ap.add_argument("--scan", type=float, default=SCAN_INTERVAL,
+                    help="przerwa miedzy skanami (s, domyslnie 0)")
     ap.add_argument("--collect", action="store_true", help="tylko zbieraj scrap")
     ap.add_argument("--no-sweep", action="store_true",
                     help="nie zbieraj scrapa przy bezczynnosci")
@@ -507,6 +522,10 @@ def main():
     SWEEP_LINES = max(2, args.sweep_lines)
     SWEEP_EVERY = max(0.0, args.sweep_every)
     SWEEP_SEG_MS = max(40, args.hold_ms)
+    SWIPE_MS = max(20, args.swipe_ms)
+    MERGE_GAP = max(0.0, args.gap)
+    ANIM = max(0.08, args.anim)
+    SCAN_INTERVAL = max(0.0, args.scan)
     STORM_MERGE = args.storm_merge
     GUARD = not args.no_guard
     if args.settle is not None:
