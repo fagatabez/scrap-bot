@@ -284,11 +284,13 @@ def _green_button_width(img):
 
 
 def find_red_button(img):
-    """Czerwony przycisk "Nie" w popupie (obok zielonego "Tak!")."""
+    """Czerwony przycisk "Nie" w popupie (obok zielonego "Tak!").
+
+    Szukamy go samodzielnie (nie przez zielony przycisk) - w chwili po
+    kliknieciu koronki zielony "Tak!" moze byc jeszcze niewidoczny
+    (animacja okna), a czerwony "Nie" juz widać.
+    """
     h, w = img.shape[:2]
-    green = find_green_button(img)
-    if not green:
-        return None
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     red = cv2.inRange(hsv, np.array([0, 130, 110]), np.array([12, 255, 255])) | \
         cv2.inRange(hsv, np.array([168, 130, 110]), np.array([180, 255, 255]))
@@ -301,8 +303,12 @@ def find_red_button(img):
             continue
         if not (1.3 < bw / max(bh, 1) < 5.0):
             continue
-        if x > green[0]:                   # musi byc na lewo od "Tak!"
+        crop = hsv[y:y + bh, x:x + bw]
+        if crop.size == 0:
             continue
+        white = cv2.inRange(crop, np.array([0, 0, 190]), np.array([180, 70, 255]))
+        if int((white > 0).sum()) < 0.008 * bw * bh:
+            continue                        # brak napisu - to nie przycisk
         cx, cy = x + bw // 2, y + bh // 2
         if best is None or area > best[0]:
             best = (area, cx, cy)
@@ -356,34 +362,21 @@ def watch_offer(io):
     if not pos:
         return None
     io.tap(*pos)
-    time.sleep(1.2)
-
-    frame = io.grab()
-    tak = find_boost_button(frame)          # "Szybsze Beczki" - chcemy to
-    if tak:
-        io.tap(*tak)
-        time.sleep(1.6)
-        close_after_ad(io)
-        return "tak"
-    nie = find_red_button(frame)            # inne okno (np. "Auto Laczenie")
-    if nie:
-        io.tap(*nie)
-        time.sleep(0.9)
-        return "nie"
-    # okno mogl sie otworzyc z opoznieniem - sprobujmy jeszcze raz
-    time.sleep(1.0)
-    frame = io.grab()
-    tak = find_boost_button(frame)
-    if tak:
-        io.tap(*tak)
-        time.sleep(1.6)
-        close_after_ad(io)
-        return "tak"
-    nie = find_red_button(frame)
-    if nie:
-        io.tap(*nie)
-        time.sleep(0.9)
-        return "nie"
+    # okno moze sie otworzyc z opoznieniem (animacja) - sprawdzamy kilka razy
+    for wait in (0.5, 0.8, 1.2, 1.8, 2.5):
+        time.sleep(wait)
+        frame = io.grab()
+        tak = find_boost_button(frame)      # "Szybsze Beczki" - chcemy to
+        if tak:
+            io.tap(*tak)
+            time.sleep(1.6)
+            close_after_ad(io)
+            return "tak"
+        nie = find_red_button(frame)        # inne okno (np. "Wiecej Zlomu")
+        if nie:
+            io.tap(*nie)
+            time.sleep(0.9)
+            return "nie"
     return None
 
 
