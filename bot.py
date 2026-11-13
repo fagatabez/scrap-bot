@@ -56,12 +56,12 @@ SHOT = os.path.join(tempfile.gettempdir(), "scrap_bot_shot.png")
 BACKEND = "auto"            # auto | root | adb | win - rozpoznawane przy starcie
 IO = None                   # obiekt wejscia/wyjscia wybrany przez backends.detect
 STORM_MERGE = False         # True po kupieniu laczenia w sztormie za gwiazdy
-SWIPE_MS = 45               # czas trwania dragu (ms) - krotszy = szybsze laczenie
+SWIPE_MS = 35               # czas trwania dragu (ms) - krotszy = szybsze laczenie
 
 SCAN_INTERVAL = 0.0         # odstep miedzy skanami planszy
-SETTLE = 0.03               # zrzut musi byc nowszy niz drag + SETTLE
+SETTLE = 0.02               # zrzut musi byc nowszy niz drag + SETTLE
 MERGE_GAP = 0.0             # przerwa miedzy kolejnymi dragami
-ANIM = 0.18                 # tyle sekund nie ufamy polom dotknietym dragiem
+ANIM = 0.12                 # tyle sekund nie ufamy polom dotknietym dragiem
 RETRY = 1.2                 # ta sama para moze byc powtorzona po tym czasie
 VERIFY_THRESHOLD = 0.35     # zmiana wygladu pola = merge przeszedl (tryb --once)
 TAP_GAP = 0.05              # odstep miedzy tapami (juz nieuzywany w zbieraniu)
@@ -247,6 +247,8 @@ def scanner_loop():
     last_cover = 0.0
     last_boost = 0.0
     last_boost_check = 0.0
+    last_crown = 0.0
+    last_crown_check = 0.0
     seen_game = False            # czy widzielismy juz Scrap Clicker 2
     warned_other = False
     boost_on = False
@@ -291,24 +293,40 @@ def scanner_loop():
             # Okno (reklama/popup/anty-macro) przyciemnia plansze - wyglada
             # wtedy jak sztorm. Trzeba to sprawdzic PRZED sztormem, inaczej
             # bot zamiast obsluzyc okno zacznie zbierac scrapa.
-            popup = ads.has_popup(frame)
-            # zielony dolny pasek gry - reklamy go nie ma
-            in_game = ads.game_bar(frame)
+            popup, in_game, is_scrap = ads.scan_state(frame)
 
-            # boost 'Szybsze Beczki' - w HUD swieci niebieski licznik
-            if ads.boost_active(frame):
-                if not boost_on:
-                    print("[BOT] boost 'Szybsze Beczki' aktywny "
-                          "(10x szybciej - koronka znika, wraci pozniej)")
-                    boost_on = True
-            else:
-                boost_on = False
+            # --- PRIORYTET 1: koronka eventow ------------------------------
+            # Jak koronka jest na ekranie, klikamy ja od razu (oferta boostu
+            # znika po chwili i nie warto czekac na kolejna klatke).
+            if (not popup and in_game and ts - last_crown > 5.0
+                    and ts - last_crown_check > 0.25
+                    and BOOST is not None and getattr(BOOST, "popup", False)):
+                pos = ads.find_boost_icon(frame, ads.board_rect(frame))
+                if pos:
+                    last_crown = ts
+                    with LOCK:
+                        STATE["offer_busy"] = True
+                        STATE["plan"] = None
+                        STATE["serial"] += 1
+                    try:
+                        r = ads.watch_offer(IO, pos=pos)
+                    except Exception as exc:
+                        print(f"[BOT] koronka: {exc}")
+                        r = None
+                    finally:
+                        with LOCK:
+                            STATE["offer_busy"] = False
+                    if r == "tak":
+                        print("[BOT] obejrzalem reklame - beczki 10x szybciej "
+                              "przez 10 min")
+                    elif r == "nie":
+                        print("[BOT] inna oferta - odrzucilem, sprobuje pozniej")
 
             # Czy to na pewno Scrap Clicker 2? Jesli bot widzial juz gre,
             # a teraz jej nie ma - to reklama/okno tej gry (zamykamy).
             # Jesli gry nie widzial w ogole - to inna aplikacja w emulatorze
             # i nie ruszamy sie, zeby nie machac myszka w obcej grze.
-            if ads.is_scrap_game(frame):
+            if is_scrap:
                 seen_game = True
             elif not seen_game:
                 if not warned_other:
@@ -483,6 +501,7 @@ def worker_loop(forever=True):
     last_total = -1
     last_n = 0
     last_action = 0.0
+    last_drag_start = 0.0
     last_progress = t0
     last_cover_check = 0.0
     warned_cover = False
@@ -492,8 +511,6 @@ def worker_loop(forever=True):
     idx = 0
     recent = {}
     last_sweep = t0
-    last_offer = t0 - BOOST_OFFER_EVERY + 20   # pierwsza proba koronki po 20 s
-    offer_wait = BOOST_OFFER_EVERY   # odstep miedzy probami klikniecia koronki
     marks = []                  # czasy ostatnich merge'y (2 s) do tempa "teraz"
     pace_marks = []             # czasy merge'ow (30 s) do limitu na 10 min
     batch = 0                   # ile dragow poszlo z biezacego skanu
@@ -521,6 +538,13 @@ def worker_loop(forever=True):
         with LOCK:
             storm = STATE["storm"]
             plan = STATE["plan"]
+            offer_busy = STATE.get("offer_busy")
+        if offer_busy:
+            # trwa obsluga oferty (kliknieta koronka/reklama) - nie ruszamy sie
+            cur = None
+            cur_id = None
+            time.sleep(0.05)
+            continue
 
         if storm:
             cur = None
@@ -546,38 +570,6 @@ def worker_loop(forever=True):
             last_progress = time.time()
             continue
 
-        # Obserwowanie koronki eventow: klikamy ja, jak sie pojawi, i bierzemy
-        # oferty. "Nie" sprawia, ze koronka znika na jakis czas i wraca z
-        # innym boostem - wtedy klikamy ponownie.
-        if (WATCH_OFFER and BOOST is not None
-                and getattr(BOOST, "popup", False)
-                and plan is not None
-                and now - last_offer >= offer_wait):
-            last_offer = now
-            try:
-                r = ads.watch_offer(IO)
-            except Exception as exc:
-                print(f"[BOT] oferta: {exc}")
-                r = None
-            if r == "tak":
-                print("[BOT] obejrzalem reklame - beczki 10x szybciej "
-                      "przez 10 min")
-                offer_wait = BOOST_OFFER_EVERY
-                last_action = time.time()
-                cur = None
-                cur_id = None
-                continue
-            if r == "nie":
-                print("[BOT] inna oferta - odrzucilem, sprobuje za "
-                      f"{OFFER_RETRY:.0f} s")
-                offer_wait = OFFER_RETRY
-                last_action = time.time()
-                cur = None
-                cur_id = None
-                continue
-            # nie ma koronki - lecimy dalej bez przestoju
-            offer_wait = BOOST_OFFER_EVERY
-
         # brak par (nawet jak plan istnieje) = plansza bez par do polaczenia
         pairs_now = len(plan["prs"]) if plan is not None else 0
         if not pairs_now:
@@ -591,8 +583,11 @@ def worker_loop(forever=True):
             continue
 
         if cur is None:
-            if plan["ts"] < last_action + SETTLE:
-                time.sleep(0.01)                   # zrzut sprzed animacji
+            # Nie czekamy na nowy plan - pola zmienione po ostatnim dragu
+            # i tak blokuje ANIM, a kandydat musi istniec w najnowszym skanie.
+            # Czekamy tylko, jak plan jest naprawde stary.
+            if plan["ts"] < last_action - 1.0:
+                time.sleep(0.005)
                 continue
             cur, cur_id, idx = plan, plan["id"], 0
             last_n = len(plan["boxes"])
@@ -619,7 +614,8 @@ def worker_loop(forever=True):
             fresh = STATE["plan"]
         fresh_ok = (fresh is not None and fresh["id"] != cur_id and
                     now - fresh["ts"] < 0.6 and len(fresh["boxes"]) >= 6 and
-                    fresh["ts"] > last_action + SETTLE)
+                    (fresh["ts"] > last_action + SETTLE or
+                     fresh["ts"] < last_drag_start))
         fresh_pts = [center(b) for b in fresh["boxes"]] if fresh_ok else None
 
         chosen = None
@@ -689,6 +685,7 @@ def worker_loop(forever=True):
                         delay += random.uniform(0.05, 0.25)
                     time.sleep(max(0.0, delay))
         _remember_action(a, b)                      # zanim skaner zrobi zrzut
+        last_drag_start = time.perf_counter()
         do_merge(a, b)
         last_action = time.time()
         recent[key] = last_action
@@ -937,6 +934,9 @@ def main():
                 HUMAN_MAX = int(float(v[:-1]) * 1000) if v.endswith("k") else int(float(v))
             except ValueError:
                 print(f"[BOT] nie rozumiem limitu '{v}' - pomijam")
+        else:
+            # bez trzeciego parametru: domyslne 3,5 tys. laczen na 10 min
+            HUMAN_MAX = 3500
     # losowe pauzy tylko razem z trybem "ludzkim"
     HUMAN_DELAY = HUMAN > 0 and not args.no_human_delay
     if HUMAN or HUMAN_MAX:

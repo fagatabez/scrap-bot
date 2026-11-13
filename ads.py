@@ -92,28 +92,36 @@ def has_crown(img, min_score=0.18):
     return best < min_score
 
 
-def boost_active(img):
-    """Czy w HUD swieci niebieski licznik boosta (zamiast koronki)?
+def scan_state(img):
+    """Jednorazowa analiza klatki: (okno?, pasek gry?, to nasza gra?).
 
-    Gdy boost 'Szybsze Beczki' dziala, koronka znika z prawego gornego rogu
-    i pojawia sie niebieski prostokat z czasem do konca.
+    Wszystkie sprawdzenia korzystaja z jednej konwersji do HSV - wczesniej
+    kazda z osobna kosztowala ~4 ms, a skaner wychodzil ~85 ms na klatke
+    (11 FPS), przez co robotnik czekal na nowy plan.
     """
     h, w = img.shape[:2]
-    strip = img[:int(h * 0.13)]
-    if strip.size == 0:
-        return False
-    hsv = cv2.cvtColor(strip, cv2.COLOR_BGR2HSV)
-    blue = cv2.inRange(hsv, np.array([100, 110, 150]), np.array([135, 255, 255]))
-    blue = cv2.morphologyEx(blue, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
-    for x, y, bw, bh, area in _components(blue, 150):
-        if x < 0.55 * w:
-            continue
-        if bw < 0.03 * w or bh < 0.02 * h:
-            continue
-        if not (0.6 < bw / max(bh, 1) < 2.5):
-            continue
-        return True
-    return False
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    hh, ss, vv = cv2.split(hsv)
+
+    # jasnoszare okno gry (reklama/popup)
+    gray = ((np.abs(hh - ss) < 12) & (np.abs(ss - vv) < 12) &
+            (vv > 185) & (vv < 235))
+    popup = float(gray.mean()) > 0.05
+
+    # nasycona zielen - pasek gry na dole (w kazdej orientacji)
+    green = (hh >= 30) & (hh <= 90) & (ss > 120)
+    edges = (
+        float(green[int(h * 0.90):].mean()),
+        float(green[:int(h * 0.10)].mean()),
+        float(green[:, :int(w * 0.10)].mean()),
+        float(green[:, int(w * 0.90):].mean()),
+    )
+    in_game = max(edges) > 0.05
+
+    # jasnozielone tlo planszy = nasza gra
+    board = ((hh >= 40) & (hh <= 80) & (ss >= 20) & (ss <= 90) & (vv >= 165))
+    is_scrap = float(board.mean()) > 0.06 or has_crown(img)
+    return popup, in_game, is_scrap
 
 
 def is_scrap_game(img, min_frac=0.06):
@@ -487,15 +495,16 @@ def find_boost_icon(img, board=None):
     return (best[1], best[2]) if best else None
 
 
-def watch_offer(io, verbose=True):
+def watch_offer(io, verbose=True, pos=None):
     """Kliknie koronke eventow i obsluzy oferte.
 
     Zwraca: 'tak' (obejrzano reklame = boost), 'nie' (odrzucono oferte),
-    None (nie bylo oferty).
+    None (nie bylo oferty). `pos` to juz znaleziona pozycja koronki.
     """
-    frame = io.grab()
-    board = board_rect(frame)
-    pos = find_boost_icon(frame, board)
+    if pos is None:
+        frame = io.grab()
+        board = board_rect(frame)
+        pos = find_boost_icon(frame, board)
     if not pos:
         return None
     if verbose:

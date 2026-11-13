@@ -38,7 +38,8 @@ Zmierzone na tym komputerze:
 | wykrycie beczek i par (obraz 900x1600) | 10 ms |
 | to samo dla zdjecia z telefonu 1260x2800 (skalowane do 900 px) | 12 ms |
 | zrzut okna gry | 13 ms |
-| jeden drag mysza (45 ms gestii) | 55 ms |
+| jeden drag mysza (35 ms gestii) | 47 ms |
+| pelny cykl merge'a (zrzut + analiza + gest) | ~55-65 ms |
 | uruchomienie jednego procesu `adb` | 22 ms |
 
 Dlatego bot nie odpala procesu na kazdy klik: trzyma jedna stala powloke
@@ -132,11 +133,17 @@ bywa niewidoczny), dopiero potem czerwonym X-em na ekranie. Wylaczenie:
 Bot moze sie zachowywac jak czlowiek, a nie jak maszyna:
 
 ```powershell
-python bot.py --human 1          # 1% prawdziwych pomyłek
-python bot.py --human 5          # 5% pomyłek
-python bot.py --human 10 3500    # 10% pomyłek + maks. 3500 laczeń na 10 min
+python bot.py                    # MAKSYMALNA szybkosc: bez limitu, 15-20 merge'ow/s
+python bot.py --human 1          # 1% pomyłek + limit 3500 laczen/10 min (domyslny)
+python bot.py --human 5          # 5% pomyłek, limit 3500/10 min
+python bot.py --human 10 4000    # 10% pomyłek + własny limit (4000/10 min)
 python bot.py --human 10 3.5k   # to samo ("3.5k" też działa)
 ```
+
+**Bez `--human` bot nie ma żadnego limitu** - łączy tak szybko, jak potrafi
+(na tym komputerze 15-20 merge'ów/s). **`--human` włącza limit 3,5 tys.
+łączeń na 10 minut** (5,8/s) — tyle robią normalni gracze; drugi parametr
+pozwala to zmienić.
 
 Przy `--human N` bot:
 
@@ -205,7 +212,9 @@ jego miejscu jest niebieski licznik czasu (np. 02:56). Wtedy bot nie ma czego
 klikać i po prostu łączy - w logu wypisze "boost 'Szybsze Beczki' aktywny".
 Koronka wraca później z kolejną ofertą.
 
-Bot robi to co 60 s (`--boost-every`), o ile koronka jest widoczna. Gdy wyskoczy
+**Koronka to priorytet nr 1:** skaner sprawdza ją w każdej klatce (raz na
+0,25 s) i klika **natychmiast**, gdy się pojawi - nie czeka na przerwę
+w łączeniu. Gdy wyskoczy
 oferta **nie**będąca boostec, bot ją odrzuca ("Nie") i ** próbuje ponownie
 za 12 s** - koronka wraca szybko, a wybór oferty jest losowy, więc "Szybsze
 Beczki" w końcu się trafia. Po
