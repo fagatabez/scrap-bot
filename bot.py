@@ -249,6 +249,7 @@ def scanner_loop():
     last_boost_check = 0.0
     seen_game = False            # czy widzielismy juz Scrap Clicker 2
     warned_other = False
+    boost_on = False
     fails = 0
     while not STATE["stop"]:
         if STATE["paused"]:
@@ -293,6 +294,15 @@ def scanner_loop():
             popup = ads.has_popup(frame)
             # zielony dolny pasek gry - reklamy go nie ma
             in_game = ads.game_bar(frame)
+
+            # boost 'Szybsze Beczki' - w HUD swieci niebieski licznik
+            if ads.boost_active(frame):
+                if not boost_on:
+                    print("[BOT] boost 'Szybsze Beczki' aktywny "
+                          "(10x szybciej - koronka znika, wraci pozniej)")
+                    boost_on = True
+            else:
+                boost_on = False
 
             # Czy to na pewno Scrap Clicker 2? Jesli bot widzial juz gre,
             # a teraz jej nie ma - to reklama/okno tej gry (zamykamy).

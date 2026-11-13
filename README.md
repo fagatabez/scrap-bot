@@ -200,6 +200,11 @@ eventow). Klikniecie jej otwiera okno z oferta "Szybsze Beczki" albo
    i czeka,
 4. dalej laczy beczki.
 
+**Uwaga: gdy boost ju�� działa, koronka znika** z prawego gornego rogu, a w
+jego miejscu jest niebieski licznik czasu (np. 02:56). Wtedy bot nie ma czego
+klikać i po prostu łączy - w logu wypisze "boost 'Szybsze Beczki' aktywny".
+Koronka wraca później z kolejną ofertą.
+
 Bot robi to co 60 s (`--boost-every`), o ile koronka jest widoczna. Gdy wyskoczy
 oferta **nie**będąca boostec, bot ją odrzuca ("Nie") i ** próbuje ponownie
 za 12 s** - koronka wraca szybko, a wybór oferty jest losowy, więc "Szybsze

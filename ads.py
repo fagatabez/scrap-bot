@@ -92,6 +92,30 @@ def has_crown(img, min_score=0.18):
     return best < min_score
 
 
+def boost_active(img):
+    """Czy w HUD swieci niebieski licznik boosta (zamiast koronki)?
+
+    Gdy boost 'Szybsze Beczki' dziala, koronka znika z prawego gornego rogu
+    i pojawia sie niebieski prostokat z czasem do konca.
+    """
+    h, w = img.shape[:2]
+    strip = img[:int(h * 0.13)]
+    if strip.size == 0:
+        return False
+    hsv = cv2.cvtColor(strip, cv2.COLOR_BGR2HSV)
+    blue = cv2.inRange(hsv, np.array([100, 110, 150]), np.array([135, 255, 255]))
+    blue = cv2.morphologyEx(blue, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    for x, y, bw, bh, area in _components(blue, 150):
+        if x < 0.55 * w:
+            continue
+        if bw < 0.03 * w or bh < 0.02 * h:
+            continue
+        if not (0.6 < bw / max(bh, 1) < 2.5):
+            continue
+        return True
+    return False
+
+
 def is_scrap_game(img, min_frac=0.06):
     """Czy to na pewno Scrap Clicker 2 (plansza albo okno gry)?
 
