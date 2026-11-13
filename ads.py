@@ -468,23 +468,33 @@ def find_boost_icon(img, board=None):
     korona byla nad plansza gry i miala ksztalt korony, a nie kwadratu.)
     """
     h, w = img.shape[:2]
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    # Sprawdzamy tylko prawy gorny wycinek (nad plansza) - kosztuje ok. 0,3 ms,
+    # wiec mozemy sprawdzac co 0,3 s bez wplywu na tempo mergowania.
+    x0 = int(w * 0.55)
+    y1 = int(h * 0.30)
+    if board is not None:
+        bx, by, bw2, bh2 = board
+        x0 = max(0, int(bx + bw2 * 0.55))
+        y1 = max(30, int(by))
+    roi = img[0:y1, x0:w]
+    if roi.size == 0:
+        return None
+    rh, rw = roi.shape[:2]
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     yellow = cv2.inRange(hsv, np.array([18, 120, 140]), np.array([38, 255, 255]))
     yellow = cv2.morphologyEx(yellow, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
     best = None
+    has_board = board is not None
     for x, y, bw, bh, area in _components(yellow, 60):
-        if x < 0.60 * w:                   # prawa polowa ekranu
-            continue
-        if y > 0.30 * h:                  # gora ekranu
-            continue
         if not (0.02 * w <= bw <= 0.16 * w):
             continue
         if not (0.012 * h <= bh <= 0.10 * h):
             continue
         if not (1.12 < bw / max(bh, 1) < 1.9):
             continue
-        cx, cy = x + bw // 2, y + bh // 2
-        if board is not None:
+        cx = x + bw // 2 + x0
+        cy = y + bh // 2
+        if has_board:
             bx, by, bw2, bh2 = board
             if cy > by:                   # musi byc NAD plansza
                 continue
@@ -492,7 +502,9 @@ def find_boost_icon(img, board=None):
                 continue
         if best is None or area > best[0]:
             best = (area, cx, cy)
-    return (best[1], best[2]) if best else None
+    if best is None:
+        return None
+    return (best[1], best[2])
 
 
 def watch_offer(io, verbose=True, pos=None):

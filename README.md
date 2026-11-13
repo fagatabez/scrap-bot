@@ -215,10 +215,12 @@ jego miejscu jest niebieski licznik czasu (np. 02:56). Wtedy bot nie ma czego
 klikać i po prostu łączy - w logu wypisze "boost 'Szybsze Beczki' aktywny".
 Koronka wraca później z kolejną ofertą.
 
-**Koronka:** bot klika ją, gdy się pojawi, ale **nie częściej niż raz na 2
-minuty** (`--boost-every`), żeby nie przerywać łączeniu. W trybie domyślnym
-bot jest skupiony na szybkim łączeniu - przerwy są tylko wtedy, gdy sama
-reklama się pojawi. Gdy wyskoczy
+**Koronka:** bot sprawdza ją **co 0,3 s** (koszt ~1 ms - patrzy tylko na
+prawy górny wycinek obrazu) i **klika od razu**, gdy się pojawi - nie musisz
+czekać 2 minut. Minimalny odstęp między kliknięciami to 120 s
+(`--boost-every`), a po odrzuceniu oferty 30 s, żeby nie wpaść w pętlę
+popupów. W trybie domyślnym bot jest skupiony na szybkim łączeniu - przerwy
+są tylko wtedy, gdy sama reklama się pojawi. Gdy wyskoczy
 oferta **nie**będąca boostec, bot ją odrzuca ("Nie") i ** próbuje ponownie
 za 12 s** - koronka wraca szybko, a wybór oferty jest losowy, więc "Szybsze
 Beczki" w końcu się trafia. Po

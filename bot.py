@@ -81,7 +81,8 @@ IDLE = 0.01                 # przerwa, gdy nie ma czego laczyc
 MAX_BATCH = 0               # max dragow z jednego skanu (0 = bez limitu)
 GUARD = True                # pilnowanie reklam/popupow
 BOOST_OFFER_EVERY = 60      # jak czesto klikac koronke eventow (s)
-CROWN_EVERY = 120            # jak czesto klikac koronke eventow (s)
+CROWN_EVERY = 120            # minimalny odstep miedzy kliknieciami koronki (s)
+CROWN_BACKOFF = 30           # po odrzuceniu oferty - krotka przerwa
 WATCH_OFFER = True          # klikanie koronki eventow (obserwowanie boostow)
 HUMAN = 0.0                 # % celowych bledow przy merge (jak w "ludzkim" bocie)
 HUMAN_MAX = 0               # limit merge'ow na 10 min (0 = bez limitu)
@@ -291,6 +292,7 @@ def scanner_loop():
     last_boost = 0.0
     last_boost_check = 0.0
     last_crown = 0.0
+    last_crown_check = 0.0
     seen_game = False            # czy widzielismy juz Scrap Clicker 2
     warned_other = False
     boost_on = False
@@ -340,11 +342,12 @@ def scanner_loop():
             # --- PRIORYTET 1: koronka eventow ------------------------------
             # Jak koronka jest na ekranie, klikamy ja od razu (oferta boostu
             # znika po chwili i nie warto czekac na kolejna klatke).
-            if (not popup and in_game and ts - last_crown > CROWN_EVERY
+            if (not popup and in_game and ts - last_crown_check > 0.3
                     and BOOST is not None and getattr(BOOST, "popup", False)):
                 pos = ads.find_boost_icon(frame, ads.board_rect(frame))
-                if pos:
+                if pos and ts - last_crown > CROWN_EVERY:
                     last_crown = ts
+                    last_crown_check = ts
                     with LOCK:
                         STATE["offer_busy"] = True
                         STATE["plan"] = None
@@ -362,6 +365,9 @@ def scanner_loop():
                               "przez 10 min")
                     elif r == "nie":
                         print("[BOT] inna oferta - odrzucilem, sprobuje pozniej")
+                        # krotka przerwa po odrzuceniu, zeby nie wpadac
+                        # w petle popupow (koronka i tak wraca z nowa oferta)
+                        last_crown = time.time() - CROWN_EVERY + CROWN_BACKOFF
 
             # Czy to na pewno Scrap Clicker 2? Jesli bot widzial juz gre,
             # a teraz jej nie ma - to reklama/okno tej gry (zamykamy).
