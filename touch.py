@@ -162,14 +162,29 @@ class Touch:
         time.sleep(max(0.005, hold_ms / 1000.0))
         self.up()
 
-    def swipe(self, x1, y1, x2, y2, dur_ms=45, steps=6):
+    def swipe(self, x1, y1, x2, y2, dur_ms=45, steps=6, curve=0.0, jitter=0.0):
         """Przeciagniecie jednym gestem - szybkie, bo to jeden zapis."""
+        import random
+        if jitter:
+            x1 += random.randint(-int(jitter), int(jitter))
+            y1 += random.randint(-int(jitter), int(jitter))
+            x2 += random.randint(-int(jitter), int(jitter))
+            y2 += random.randint(-int(jitter), int(jitter))
         self.down(x1, y1)
         steps = max(2, int(steps))
         per = max(0.004, (dur_ms / 1000.0) / steps)
+        cx = cy = 0
+        if curve:
+            dx, dy = x2 - x1, y2 - y1
+            ln = max(1.0, (dx * dx + dy * dy) ** 0.5)
+            off = random.uniform(-curve, curve) * ln
+            cx = (x1 + x2) / 2 - dy / ln * off
+            cy = (y1 + y2) / 2 + dx / ln * off
         for k in range(1, steps + 1):
-            self.move(x1 + (x2 - x1) * k / steps,
-                      y1 + (y2 - y1) * k / steps)
+            t = k / steps
+            px = (1 - t) ** 2 * x1 + 2 * (1 - t) * t * cx + t * t * x2
+            py = (1 - t) ** 2 * y1 + 2 * (1 - t) * t * cy + t * t * y2
+            self.move(px, py)
             time.sleep(per)
         self.up()
 

@@ -85,6 +85,11 @@ CROWN_EVERY = 120            # minimalny odstep miedzy kliknieciami koronki (s)
 CROWN_BACKOFF = 30           # po odrzuceniu oferty - krotka przerwa
 UPGRADE_EVERY = 180         # jak czesto ulepszac wszystko co da sie kupic (s)
 UPGRADE_BUDGET = 240        # ile sekund moze trwac jedna runda ulepszen
+CURVE = 0.06                # jak mocno ruch myszy odchodzi od prostej
+JITTER = 5                  # losowe przesuniecie punktu (px) - anty-detekcja
+STOP_AFTER = 0              # koncz po tylu merge'ach (0 = bez limitu)
+UPGRADE_MERGES = 0          # ulepsz co tyle merge'ow (0 = tylko po czasie)
+STORM_RETRIES = 5           # ile razy przejechac zygzagem w sztormie
 WATCH_OFFER = True          # klikanie koronki eventow (obserwowanie boostow)
 HUMAN = 0.0                 # % celowych bledow przy merge (jak w "ludzkim" bocie)
 HUMAN_MAX = 0               # limit merge'ow na 10 min (0 = bez limitu)
@@ -123,7 +128,7 @@ def tap(x, y):
 
 
 def do_merge(a, b):
-    IO.swipe(a[0], a[1], b[0], b[1], dur=SWIPE_MS)
+    IO.swipe(a[0], a[1], b[0], b[1], dur=SWIPE_MS, curve=CURVE, jitter=JITTER)
 
 
 def center(box):
@@ -230,6 +235,7 @@ def upgrade_pass(verbose=True, budget=None):
                 IO.fast_tap(x, y)
                 clicks += 1
                 time.sleep(0.008)
+    STATS["upgrades"] = STATS.get("upgrades", 0) + 1
     if verbose:
         print(f"[BOT] ulepszenia: {clicks} klikniec (MAX i szare pomijam)")
     time.sleep(0.4)
@@ -279,6 +285,30 @@ def storm_sweep(frame=None, verbose=False):
     return len(pts)
 
 
+def storm_zigzag_path(frame, rows=16):
+    """Szybki zygzag z gory na dol - tak zbiera sie 'chmura magnesow'.
+
+    Trzymamy przycisk i jezdimy lewo-prawo w dol, az do dolnej krawedzi.
+    To sposob z referencyjnego bota: chmura spadaja w calym oknie, wiec
+    sam zygzag wybija wszystko, co wypadlo.
+    """
+    h, w = frame.shape[:2]
+    top = int(h * 0.13)
+    bottom = int(h * 0.90)
+    left = int(w * 0.03)
+    right = int(w * 0.97)
+    step = max(10, (bottom - top) // max(1, rows))
+    pts = []
+    y = top
+    x = left
+    while y < bottom:
+        pts.append((x, y))
+        y += step
+        x = right if x == left else left
+    pts.append((x, bottom))
+    return pts
+
+
 def storm_collect(frame=None, verbose=False):
     """W sztormie zbiera to, co SPADA.
 
@@ -306,16 +336,28 @@ def storm_collect(frame=None, verbose=False):
             continue
         pts.append((x + bw // 2, y + bh // 2))
     if not pts:
-        # nic nie spada - wtedy stare szybkie kolka
-        return storm_sweep(verbose=verbose)
+        # nic nie spada - wtedy szybki zygzag po calym ekranie
+        pts = storm_zigzag_path(frame)
+        total = max(250, len(pts) * 8)
+        IO.hold_path(pts, seg_ms=SWEEP_SEG_MS, total_ms=total)
+        if getattr(IO, "async_input", False):
+            time.sleep(total / 1000.0 + 0.05)
+        if verbose:
+            print(f"[BOT] sztorm: zygzag, {len(pts)} punktow")
+        return len(pts)
     pts.sort(key=lambda p: p[1])
     path = pts[:8]
     total = max(150, len(path) * 45)
     IO.hold_path(path, seg_ms=SWEEP_SEG_MS, total_ms=total)
     if getattr(IO, "async_input", False):
         time.sleep(total / 1000.0 + 0.05)
+    # a potem zygzag przez reszte ekranu (chmura spada wszedzie)
+    zig = storm_zigzag_path(frame)
+    IO.hold_path(zig, seg_ms=SWEEP_SEG_MS, total_ms=max(250, len(zig) * 8))
+    if getattr(IO, "async_input", False):
+        time.sleep(max(250, len(zig) * 8) / 1000.0 + 0.05)
     if verbose:
-        print(f"[BOT] sztorm: zbieram {len(path)} spadajacych")
+        print(f"[BOT] sztorm: {len(path)} spadajacych + zygzag {len(zig)}")
     return len(path)
 
 
@@ -460,6 +502,13 @@ def scanner_loop():
             if is_scrap:
                 seen_game = True
             elif not seen_game:
+                # Moze to reklama w emulatorze (a nie inna gra)? Reklama ma
+                # swoje przyciski zamkniecia - wtedy zamykamy ja. Inaczej to
+                # obca aplikacja i nie ruszamy sie.
+                if ads.find_ad_close(frame):
+                    print("[BOT] reklama na ekranie - zamykam")
+                    ads.close_after_ad(IO)
+                    continue
                 if not warned_other:
                     print("[BOT] to nie jest Scrap Clicker 2 - czekam "
                           "(nie bede klapal w inna gre)")
@@ -500,6 +549,7 @@ def scanner_loop():
                     # zamykac, bo czeka na odpowiedz
                     if ads.solve_anti_macro(IO, frame):
                         STATS["antimacro"] = STATS.get("antimacro", 0) + 1
+                        STATS["captchas"] = STATS.get("captchas", 0) + 1
                         continue
                     if ads.close_screen(IO):
                         STATS["ads_closed"] = STATS.get("ads_closed", 0) + 1
@@ -637,6 +687,7 @@ def worker_loop(forever=True):
     last_cover_check = 0.0
     warned_cover = False
     storm_announced = False
+    warned_storm = False
     cur = None
     cur_id = None
     idx = 0
@@ -686,6 +737,10 @@ def worker_loop(forever=True):
             if not forever:
                 print("[BOT] sztorm - koncze, w sztormie nie da sie laczyc")
                 break
+            if not warned_storm:
+                print("[BOT] sztorm - zbieram chmure magnesow")
+                warned_storm = True
+                STATS["storms"] = STATS.get("storms", 0) + 1
             storm_collect(verbose=False)
             time.sleep(STORM_PAUSE)
             continue
@@ -830,6 +885,20 @@ def worker_loop(forever=True):
             cur_id = None
         STATS["merges"] = total
 
+        if STOP_AFTER and total >= STOP_AFTER:
+            print(f"[BOT] koncze: osiagnalem {STOP_AFTER} merge'ow")
+            break
+        if UPGRADE_MERGES and total % UPGRADE_MERGES == 0:
+            print(f"[BOT] {total} merge'ow - czas na ulepszenia")
+            try:
+                upgrade_pass()
+            except Exception as exc:
+                print(f"[BOT] ulepszenia: {exc}")
+            last_action = time.time()
+            cur = None
+            cur_id = None
+            continue
+
         now = time.time()
         marks.append(now)
         marks[:] = [x for x in marks if now - x <= 2.0]
@@ -839,7 +908,10 @@ def worker_loop(forever=True):
             span = max(now - marks[0], 0.5)
             rate = len(marks) / span            # tempo teraz, nie srednia od startu
             print(f"[BOT] merge'y: {total} | {rate:.1f}/s teraz | "
-                  f"beczek: {last_n} | par: {len(boxes)}")
+                  f"beczek: {last_n} | par: {len(boxes)} | "
+                  f"captche {STATS.get('captchas', 0)} | "
+                  f"sztormy {STATS.get('storms', 0)} | "
+                  f"ulepszenia {STATS.get('upgrades', 0)}")
             last_report = now
             last_total = total
             STATS["rate"] = rate
@@ -974,7 +1046,8 @@ def main():
     global SWEEP, SWEEP_LINES, SWEEP_EVERY, SWEEP_SEG_MS, SCAN_INTERVAL
     global SWEEP_STYLE, CIRCLE_R, SWEEP_MS, MAX_BATCH, BOOST_OFFER_EVERY
     global WATCH_OFFER, HUMAN, HUMAN_DELAY, HUMAN_MAX, PATTERN
-    global UPGRADE_EVERY, UPGRADE_BUDGET
+    global UPGRADE_EVERY, UPGRADE_BUDGET, UPGRADE_MERGES, STOP_AFTER
+    global CURVE, JITTER
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true", help="tylko pokaz plan, bez ruchu")
     ap.add_argument("--merge", type=int, default=None, help="jeden przebieg, maks. N merge'y")
@@ -1028,6 +1101,14 @@ def main():
                     help="jak czesto ulepszac wszystko co da sie kupic (s; 0 = nigdy)")
     ap.add_argument("--upgrade-budget", type=int, default=UPGRADE_BUDGET,
                     help="ile sekund moze trwac jedna runda ulepszen")
+    ap.add_argument("--upgrade-merges", type=int, default=UPGRADE_MERGES,
+                    help="ulepsz co tyle merge'ow (0 = tylko po czasie)")
+    ap.add_argument("--stop-after", type=int, default=STOP_AFTER,
+                    help="koniec po tylu merge'ach (0 = bez limitu)")
+    ap.add_argument("--curve", type=float, default=CURVE,
+                    help="jak mocno ruch myszy odchodzi od prostej (0 = prosta)")
+    ap.add_argument("--jitter", type=int, default=JITTER,
+                    help="losowe przesuniecie punktow w px (anty-detekcja)")
     ap.add_argument("--no-boost-popup", action="store_true",
                     help="nie klikaj 'Tak!' w popupie 'Szybsze Beczki'")
     ap.add_argument("--boost-every", type=int, default=BOOST_OFFER_EVERY,
@@ -1063,6 +1144,10 @@ def main():
     BOOST_OFFER_EVERY = max(30, args.boost_every)
     UPGRADE_EVERY = max(0, args.upgrade_every)
     UPGRADE_BUDGET = max(10, args.upgrade_budget)
+    UPGRADE_MERGES = max(0, args.upgrade_merges)
+    STOP_AFTER = max(0, args.stop_after)
+    CURVE = max(0.0, min(0.5, args.curve))
+    JITTER = max(0, args.jitter)
     WATCH_OFFER = not args.no_watch_offer
     PATTERN = not args.no_pattern
     HUMAN = 0.0

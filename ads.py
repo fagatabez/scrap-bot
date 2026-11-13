@@ -103,9 +103,10 @@ def scan_state(img):
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     hh, ss, vv = cv2.split(hsv)
 
-    # jasnoszare okno gry (reklama/popup)
-    gray = ((np.abs(hh - ss) < 12) & (np.abs(ss - vv) < 12) &
-            (vv > 185) & (vv < 235))
+    # jasnoszare okno gry (reklama/popup): niskiecone kolory (ss male)
+    # o jasnej jasnosci - jasnozielone tlo gry ma nasycenie ~40%, wiec go nie
+    # lapie (ss > 30)
+    gray = (ss < 30) & (vv > 185) & (vv < 235)
     popup = float(gray.mean()) > 0.05
 
     # nasycona zielen - pasek gry na dole (w kazdej orientacji)
@@ -121,6 +122,17 @@ def scan_state(img):
     # jasnozielone tlo planszy = nasza gra
     board = ((hh >= 40) & (hh <= 80) & (ss >= 20) & (ss <= 90) & (vv >= 165))
     is_scrap = float(board.mean()) > 0.06 or has_crown(img)
+    if not is_scrap:
+        # otwarte menu 'Ulepszenia' - to tez jest ta gra (plansza zakryta)
+        green_mask = ((hh >= 45) & (hh <= 90) & (ss > 130)).astype(np.uint8) * 255
+        green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_CLOSE,
+                                       np.ones((5, 5), np.uint8))
+        n, _, st, _ = cv2.connectedComponentsWithStats(green_mask, 8)
+        for i in range(1, n):
+            gx, gy, gw, gh, ga = st[i]
+            if ga > 0.03 * h * w and gw < 0.40 * w and gh > 0.25 * h:
+                is_scrap = True
+                break
     return popup, in_game, is_scrap
 
 
@@ -970,6 +982,77 @@ def find_close_button(img):
     return (best[1], best[2]) if best else None
 
 
+def find_ad_close(img):
+    """Kandydaci na zamkniecie reklamy (od najlepszego): lista (x, y).
+
+    Reklama w emulatorze wyglada roznie:
+      * biale kolo ze strzalka u gory (np. Jewel Loop),
+      * bialy plak "Przekazano nagrode" z X w lewym gornym rogu,
+      * czerwony X w prawym gornym rogu.
+    """
+    out = []
+    h, w = img.shape[:2]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    bright = ((hsv[:, :, 2] > 195) & (hsv[:, :, 1] < 70)).astype(np.uint8) * 255
+    bright = cv2.morphologyEx(bright, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+
+    # 1) biale kolo ze strzalka - w srodku u gory
+    y0, y1 = int(h * 0.04), int(h * 0.22)
+    x0, x1 = int(w * 0.20), int(w * 0.92)
+    if y1 > y0 and x1 > x0:
+        roi = bright[y0:y1, x0:x1]
+        n, _, st, _ = cv2.connectedComponentsWithStats(roi, 8)
+        best = None
+        for i in range(1, n):
+            x, y, bw, bh, area = st[i]
+            if not (0.02 * w <= bw <= 0.10 * w):
+                continue
+            if not (0.012 * h <= bh <= 0.09 * h):
+                continue
+            if not (0.55 < bw / max(bh, 1) < 1.8):
+                continue
+            if area < 0.35 * bw * bh:
+                continue
+            cx, cy = x + bw // 2 + x0, y + bh // 2 + y0
+            if best is None or area > best[0]:
+                best = (area, cx, cy)
+        if best:
+            out.append((best[1], best[2]))
+
+    # 2) ciemny "X" na jasnym plaku "Przekazano nagrode" (lewy gorny rog)
+    y0, y1 = int(h * 0.04), int(h * 0.13)
+    x0, x1 = 0, int(w * 0.40)
+    if y1 > y0 and x1 > x0:
+        roi = img[y0:y1, x0:x1]
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        dark = (gray < 120).astype(np.uint8) * 255
+        dark = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+        n, _, st, _ = cv2.connectedComponentsWithStats(dark, 8)
+        for i in range(1, n):
+            x, y, bw, bh, area = st[i]
+            if not (0.012 * w <= bw <= 0.05 * w):
+                continue
+            if not (0.012 * h <= bh <= 0.05 * h):
+                continue
+            if not (0.6 < bw / max(bh, 1) < 1.6):
+                continue
+            if area < 0.25 * bw * bh:
+                continue
+            pad = 6
+            around = gray[max(0, y - pad):y + bh + pad, max(0, x - pad):x + bw + pad]
+            if around.size == 0:
+                continue
+            if float((around > 190).mean()) < 0.45:
+                continue                # nie jest na jasnym plaku
+            out.append((x + bw // 2 + x0, y + bh // 2 + y0))
+
+    # 3) czerwony X
+    x = find_close_button(img)
+    if x:
+        out.append(x)
+    return out
+
+
 def close_after_ad(io, tries=25):
     """Reklama wlasnie leci: czekamy az sie skonczy i wracamy do gry.
 
@@ -980,16 +1063,18 @@ def close_after_ad(io, tries=25):
         frame = io.grab()
         if game_visible(frame):
             return True
-        try:
-            if io.back():
-                time.sleep(1.0)
-                continue
-        except Exception:
-            pass
-        pos = find_close_button(frame)
-        if pos:
+        for pos in find_ad_close(frame):    # biale kolo / plak z X / czerwony X
             io.tap(*pos)
-            time.sleep(0.9)
+            time.sleep(1.0)
+            break
+        else:
+            try:
+                if io.back():               # 'wstecz' BlueStacks dziala jak X
+                    time.sleep(1.0)
+                    continue
+            except Exception:
+                pass
+            time.sleep(1.0)
             continue
         time.sleep(1.0)
     return False

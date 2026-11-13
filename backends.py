@@ -176,7 +176,7 @@ class Base:
         """Szybki klik (spam w menu ulepszen)."""
         self.tap(x, y)
 
-    def swipe(self, x1, y1, x2, y2, dur=90):
+    def swipe(self, x1, y1, x2, y2, dur=90, curve=0.0, jitter=0.0):
         self.tap(x1, y1)
 
     def key(self, code):
@@ -293,12 +293,19 @@ class ShellIO(Base):
             return
         self._send(f"input tap {dx} {dy}")
 
-    def swipe(self, x1, y1, x2, y2, dur=90):
+    def swipe(self, x1, y1, x2, y2, dur=90, curve=0.0, jitter=0.0):
         a = self.to_dev(x1, y1)
         b = self.to_dev(x2, y2)
         if self.touch is not None:
-            self.touch.swipe(a[0], a[1], b[0], b[1], dur=dur)
+            self.touch.swipe(a[0], a[1], b[0], b[1], dur=dur,
+                             curve=curve, jitter=jitter)
             return
+        if jitter:
+            import random
+            a = (a[0] + random.randint(-int(jitter), int(jitter)),
+                 a[1] + random.randint(-int(jitter), int(jitter)))
+            b = (b[0] + random.randint(-int(jitter), int(jitter)),
+                 b[1] + random.randint(-int(jitter), int(jitter)))
         self._send(f"input swipe {a[0]} {a[1]} {b[0]} {b[1]} {int(dur)}")
 
     def hold_path(self, points, seg_ms=110, total_ms=None):
@@ -425,8 +432,8 @@ class WinIO(Base):
         self.win.tap(*pos)
         return True
 
-    def swipe(self, x1, y1, x2, y2, dur=90):
-        self.win.drag(x1, y1, x2, y2, dur=dur)
+    def swipe(self, x1, y1, x2, y2, dur=90, curve=0.0, jitter=0.0):
+        self.win.drag(x1, y1, x2, y2, dur=dur, curve=curve, jitter=jitter)
 
     def hold_path(self, points, seg_ms=110, total_ms=None):
         """Trzyma lewy przycisk myszy przez caly tor - tak gra zbiera scrap."""

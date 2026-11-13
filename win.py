@@ -198,25 +198,46 @@ def _wait(sec: float):
         pass
 
 
-def drag(x1, y1, x2, y2, dur: int = 45, steps: int = None, hold: float = 0.005):
+def drag(x1, y1, x2, y2, dur: int = 45, steps: int = None, hold: float = 0.005,
+         curve: float = 0.0, jitter: float = 0.0):
     """Prawdziwy drag mysza w wspolrzednych okna.
 
     dur = ile ms ma trwac ruch (bez klikniecia i puszczenia). Krotszy drag =
     wiecej merge'y na sekunde, ale gra musi zdazyc zobaczyc ruch.
+
+    curve  - jak mocno ruch ma odchodzic od prostej (0 = prosta jak w automacie)
+    jitter - losowe wahania punktow (px), żeby nie wygladalo jak robot
     """
+    import random
     left, top, _, _ = client_rect(ensure_window())
     sx1, sy1 = int(left + x1), int(top + y1)
     sx2, sy2 = int(left + x2), int(top + y2)
+    if jitter:
+        sx1 += random.randint(-int(jitter), int(jitter))
+        sy1 += random.randint(-int(jitter), int(jitter))
+        sx2 += random.randint(-int(jitter), int(jitter))
+        sy2 += random.randint(-int(jitter), int(jitter))
     if steps is None:
         steps = max(2, int(max(abs(sx2 - sx1), abs(sy2 - sy1)) // 60))
     per = max(0.002, (dur / 1000.0) / steps)
+    # punkt kontrolny krzywej (troche z boku prostej) - jak ruch czlowieka
+    cx = cy = 0
+    if curve:
+        dx, dy = sx2 - sx1, sy2 - sy1
+        ln = max(1.0, (dx * dx + dy * dy) ** 0.5)
+        off = random.uniform(-curve, curve) * ln
+        cx = (sx1 + sx2) / 2 - dy / ln * off
+        cy = (sy1 + sy2) / 2 + dx / ln * off
     user32.SetCursorPos(sx1, sy1)
     _wait(0.002)
     user32.mouse_event(0x0002, 0, 0, 0, 0)          # LEFTDOWN
     _wait(hold)
     for k in range(1, steps + 1):
-        user32.SetCursorPos(int(sx1 + (sx2 - sx1) * k / steps),
-                            int(sy1 + (sy2 - sy1) * k / steps))
+        t = k / steps
+        # krzywa kwadratowa (Bezier)
+        px = (1 - t) ** 2 * sx1 + 2 * (1 - t) * t * cx + t * t * sx2
+        py = (1 - t) ** 2 * sy1 + 2 * (1 - t) * t * cy + t * t * sy2
+        user32.SetCursorPos(int(px), int(py))
         _wait(per)
     _wait(0.002)
     user32.mouse_event(0x0004, 0, 0, 0, 0)          # LEFTUP
