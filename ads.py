@@ -507,6 +507,112 @@ def find_boost_icon(img, board=None):
     return (best[1], best[2])
 
 
+UPGRADE_MAX = os.path.join(HERE, "assets", "upgrade_max.png")
+
+
+def find_upgrade_arrow(img):
+    """Pomarańczowa strzalka na dole gry - otwiera menu 'Ulepszenia'."""
+    h, w = img.shape[:2]
+    y0 = int(h * 0.82)
+    roi = img[y0:h]
+    if roi.size == 0:
+        return None
+    rh, rw = roi.shape[:2]
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    orange = cv2.inRange(hsv, np.array([8, 100, 90]), np.array([23, 255, 255]))
+    orange = cv2.morphologyEx(orange, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    best = None
+    for x, y, bw, bh, area in _components(orange, 80):
+        if not (0.02 * w <= bw <= 0.12 * w):
+            continue
+        if not (0.02 * h <= bh <= 0.09 * h):
+            continue
+        if not (0.45 < bw / max(bh, 1) < 1.4):
+            continue
+        cx = x + bw // 2
+        if not (0.30 * rw <= cx <= 0.70 * rw):     # srodek dolnego paska
+            continue
+        if best is None or area > best[0]:
+            best = (area, cx, y + bh // 2 + y0)
+    return (best[1], best[2]) if best else None
+
+
+def _text_rows(mask, min_h=5):
+    """Wiersze tekstu w obrazie binarnym (kolumna przyciskow)."""
+    rows = mask.sum(axis=1)
+    runs, cur = [], None
+    for i, v in enumerate(rows):
+        if v > 2:
+            cur = [i, i] if cur is None else [cur[0], i]
+        elif cur is not None:
+            runs.append(tuple(cur))
+            cur = None
+    if cur:
+        runs.append(tuple(cur))
+    return [r for r in runs if r[1] - r[0] >= min_h]
+
+
+def find_upgrade_buttons(img):
+    """Zielone przyciski w menu 'Ulepszenia' - bez tych z napisem MAX.
+
+    Zwraca liste (x, y) - srodki przyciskow, ktore da sie kliknac (cena).
+    """
+    h, w = img.shape[:2]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    green = cv2.inRange(hsv, np.array([45, 130, 90]), np.array([90, 255, 255]))
+    green = cv2.morphologyEx(green, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    n, _, st, _ = cv2.connectedComponentsWithStats(green, 8)
+    col = None
+    for i in range(1, n):
+        x, y, bw, bh, area = st[i]
+        if area < 400 or bw > 0.40 * w:
+            continue
+        if col is None or area > col[4]:
+            col = (x, y, bw, bh, area)
+    if col is None:
+        return []
+    x, y, bw, bh, _ = col
+    white = cv2.inRange(hsv[y:y + bh, x:x + bw],
+                        np.array([0, 0, 190]), np.array([180, 60, 255]))
+    runs = _text_rows(white)
+    if not runs:
+        return []
+    tmpl = cv2.imread(UPGRADE_MAX, cv2.IMREAD_GRAYSCALE)
+    out = []
+    for r in runs:
+        if tmpl is not None:
+            scale = bw / tmpl.shape[1]
+            t = tmpl if abs(scale - 1.0) < 0.03 else cv2.resize(
+                tmpl, (max(4, int(tmpl.shape[1] * scale)),
+                       max(4, int(tmpl.shape[0] * scale))),
+                interpolation=cv2.INTER_AREA)
+            reg = img[max(0, y + r[0] - 4):y + r[1] + 5, x:x + bw]
+            if reg.size == 0:
+                continue
+            g1 = cv2.cvtColor(reg, cv2.COLOR_BGR2GRAY)
+            if g1.shape[0] < t.shape[0] or g1.shape[1] < t.shape[1]:
+                continue
+            res = cv2.matchTemplate(g1, t, cv2.TM_CCOEFF_NORMED)
+            if float(res.max()) > 0.70:
+                continue                    # napis MAX - pomijamy
+        out.append((x + bw // 2, y + (r[0] + r[1]) // 2))
+    return out
+
+
+def upgrade_menu_open(img):
+    """Czy otwarte menu 'Ulepszenia' (zielona kolumna przyciskow po prawej)."""
+    h, w = img.shape[:2]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    green = cv2.inRange(hsv, np.array([45, 130, 90]), np.array([90, 255, 255]))
+    green = cv2.morphologyEx(green, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    n, _, st, _ = cv2.connectedComponentsWithStats(green, 8)
+    for i in range(1, n):
+        x, y, bw, bh, area = st[i]
+        if area > 0.03 * h * w and bw < 0.40 * w and bh > 0.25 * h:
+            return True
+    return False
+
+
 def watch_offer(io, verbose=True, pos=None):
     """Kliknie koronke eventow i obsluzy oferte.
 

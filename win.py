@@ -262,6 +262,15 @@ def tap(x, y):
     user32.mouse_event(0x0004, 0, 0, 0, 0)
 
 
+def fast_tap(x, y, hold=0.012):
+    """Klik bez dlugiego trzymania - do szybkiego spamu (do ~60 klikow/s)."""
+    left, top, _, _ = client_rect(ensure_window())
+    user32.SetCursorPos(int(left + x), int(top + y))
+    user32.mouse_event(0x0002, 0, 0, 0, 0)
+    time.sleep(hold)
+    user32.mouse_event(0x0004, 0, 0, 0, 0)
+
+
 BACK_ARROW = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "assets", "back_arrow.png")
 

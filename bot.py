@@ -83,6 +83,7 @@ GUARD = True                # pilnowanie reklam/popupow
 BOOST_OFFER_EVERY = 60      # jak czesto klikac koronke eventow (s)
 CROWN_EVERY = 120            # minimalny odstep miedzy kliknieciami koronki (s)
 CROWN_BACKOFF = 30           # po odrzuceniu oferty - krotka przerwa
+UPGRADE_EVERY = 180          # jak czesto ulepszac wszystko co da sie kupic (s)
 WATCH_OFFER = True          # klikanie koronki eventow (obserwowanie boostow)
 HUMAN = 0.0                 # % celowych bledow przy merge (jak w "ludzkim" bocie)
 HUMAN_MAX = 0               # limit merge'ow na 10 min (0 = bez limitu)
@@ -173,6 +174,43 @@ def circle_path(frame, r_frac=None, overlap=None):
                 a = 2.0 * math.pi * k / n
                 pts.append((int(cx + r * math.cos(a)), int(y + r * math.sin(a))))
     return pts
+
+
+def upgrade_pass(verbose=True):
+    """Wchodzi w menu 'Ulepszenia' i klika wszystko, co da sie kupic.
+
+    Strzalka w dolnym pasku otwiera menu, a w nim zielone przyciski z ceną.
+    Te z napisem "MAX" (już wykupione) pomijamy. Klikamy szybko - gra
+    przyjmuje tyle, ile zdąży, a przycisk po każdym zakupie zostaje na
+    miejscu, więc da się kupić kolejny poziom.
+    """
+    frame = grab()
+    pos = ads.find_upgrade_arrow(frame)
+    if not pos:
+        return 0
+    IO.tap(*pos)
+    time.sleep(0.8)
+    frame = grab()
+    if not ads.upgrade_menu_open(frame):
+        return 0
+    x = ads.find_close_button(frame)
+    if not x:
+        # to nie menu ulepszen (cos innego otworzlo sie) - nie klikamy w nic
+        return 0
+    btns = ads.find_upgrade_buttons(frame)
+    for x, y in btns:
+        for _ in range(3):             # trzy klikniecia w to samo miejsce
+            IO.fast_tap(x, y)
+            time.sleep(0.012)
+    if verbose:
+        print(f"[BOT] ulepszenia: kliknalem {len(btns)} przyciskow (MAX pomijam)")
+    time.sleep(0.4)
+    frame = grab()
+    x = ads.find_close_button(frame)
+    if x:
+        IO.tap(*x)
+    time.sleep(0.4)
+    return len(btns)
 
 
 def oval_path(frame, r_frac=0.20, turns=3, points=20):
@@ -293,6 +331,7 @@ def scanner_loop():
     last_boost_check = 0.0
     last_crown = 0.0
     last_crown_check = 0.0
+    last_upgrade = t0 - UPGRADE_EVERY + 60   # pierwsze ulepszenie po minucie
     seen_game = False            # czy widzielismy juz Scrap Clicker 2
     warned_other = False
     boost_on = False
@@ -338,6 +377,23 @@ def scanner_loop():
             # wtedy jak sztorm. Trzeba to sprawdzic PRZED sztormem, inaczej
             # bot zamiast obsluzyc okno zacznie zbierac scrapa.
             popup, in_game, is_scrap = ads.scan_state(frame)
+
+            # --- ulepszenia: od czasu do czasu kupujemy co sie da -----------
+            if (not popup and in_game and ts - last_upgrade > UPGRADE_EVERY
+                    and STATE.get("upgrade_ok", True)):
+                last_upgrade = ts
+                with LOCK:
+                    STATE["offer_busy"] = True
+                    STATE["plan"] = None
+                    STATE["serial"] += 1
+                try:
+                    upgrade_pass()
+                except Exception as exc:
+                    print(f"[BOT] ulepszenia: {exc}")
+                finally:
+                    with LOCK:
+                        STATE["offer_busy"] = False
+                continue
 
             # --- PRIORYTET 1: koronka eventow ------------------------------
             # Jak koronka jest na ekranie, klikamy ja od razu (oferta boostu
@@ -889,7 +945,7 @@ def main():
     global STORM_MERGE, SETTLE, ANIM, MERGE_GAP, SWIPE_MS, GUARD, BOOST
     global SWEEP, SWEEP_LINES, SWEEP_EVERY, SWEEP_SEG_MS, SCAN_INTERVAL
     global SWEEP_STYLE, CIRCLE_R, SWEEP_MS, MAX_BATCH, BOOST_OFFER_EVERY
-    global WATCH_OFFER, HUMAN, HUMAN_DELAY, HUMAN_MAX, PATTERN
+    global WATCH_OFFER, HUMAN, HUMAN_DELAY, HUMAN_MAX, PATTERN, UPGRADE_EVERY
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true", help="tylko pokaz plan, bez ruchu")
     ap.add_argument("--merge", type=int, default=None, help="jeden przebieg, maks. N merge'y")
@@ -939,6 +995,8 @@ def main():
                     help="czas odcinka przy zbieraniu na telefonie (ms)")
     ap.add_argument("--storm-merge", action="store_true",
                     help="lacz takze w sztormie (po kupieniu laczenia za gwiazdy)")
+    ap.add_argument("--upgrade-every", type=int, default=UPGRADE_EVERY,
+                    help="jak czesto ulepszac wszystko co da sie kupic (s; 0 = nigdy)")
     ap.add_argument("--no-boost-popup", action="store_true",
                     help="nie klikaj 'Tak!' w popupie 'Szybsze Beczki'")
     ap.add_argument("--boost-every", type=int, default=BOOST_OFFER_EVERY,
@@ -972,6 +1030,7 @@ def main():
     if args.batch is not None:
         MAX_BATCH = max(0, args.batch)
     BOOST_OFFER_EVERY = max(30, args.boost_every)
+    UPGRADE_EVERY = max(0, args.upgrade_every)
     WATCH_OFFER = not args.no_watch_offer
     PATTERN = not args.no_pattern
     HUMAN = 0.0

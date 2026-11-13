@@ -231,6 +231,21 @@ boostem - wtedy bot znów klika. **"Szybsze Beczki"** (10x szybciej przez
 Wylaczenie: `--no-watch-offer` (sama reklama przy "Szybsze Beczki", ktora
 pojawi sie sama, jest i tak obslugiwana).
 
+## Ulepszenia (menu "Ulepszenia")
+
+Bot co jakiś czas (domyślnie co 180 s, `--upgrade-every`) sam wchodzi w menu
+ulepszeń i **kupuje wszystko, co się da**:
+
+1. klika pomarańczową **strzałkę** na dole planszy (to otwiera menu),
+2. w menu klika **zielone przyciski z ceną** - szybko, trzy razy w to samo
+   miejsce (przycisk zostaje, więc da się kupić kolejny poziom),
+3. przyciski z napisem **"MAX"** (już wykupione) **pomija** - rozpoznaje je
+   po wzorcu tekstu, nie po OCR,
+4. zamyka menu czerwonym X-em i wraca do łączenia.
+
+Wykrywanie strzałki i przycisków jest odporne na rozdzielczość (skaluje się
+z rozmiarem menu). Wyłączenie: `--upgrade-every 0`.
+
 ## Dialog anty-macro
 
 Gra co jakis czas pokazuje okno "Event" z siatka 3x3: trzeba zaznaczyc

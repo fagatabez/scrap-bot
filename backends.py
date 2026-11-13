@@ -172,6 +172,10 @@ class Base:
     def tap(self, x, y):
         raise NotImplementedError
 
+    def fast_tap(self, x, y):
+        """Szybki klik (spam w menu ulepszen)."""
+        self.tap(x, y)
+
     def swipe(self, x1, y1, x2, y2, dur=90):
         self.tap(x1, y1)
 
@@ -405,6 +409,9 @@ class WinIO(Base):
 
     def tap(self, x, y):
         self.win.tap(x, y)
+
+    def fast_tap(self, x, y):
+        self.win.fast_tap(x, y)
 
     def back(self):
         """Przycisk 'wstecz' w pasku BlueStacks - zamyka reklame jak X."""
