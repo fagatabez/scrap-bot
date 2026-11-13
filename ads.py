@@ -552,27 +552,41 @@ def _text_rows(mask, min_h=5):
     return [r for r in runs if r[1] - r[0] >= min_h]
 
 
-def find_upgrade_buttons(img):
-    """Zielone przyciski w menu 'Ulepszenia' - bez tych z napisem MAX.
-
-    Zwraca liste (x, y) - srodki przyciskow, ktore da sie kliknac (cena).
-    """
-    h, w = img.shape[:2]
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+def _green_column(hsv, w):
+    """Kolumna zielonych przyciskow (x, szerokosc, od dołu). Szare przyciski
+    (nie do kupienia) dziela kolumne na kawalki - laczymy je."""
     green = cv2.inRange(hsv, np.array([45, 130, 90]), np.array([90, 255, 255]))
     green = cv2.morphologyEx(green, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
     n, _, st, _ = cv2.connectedComponentsWithStats(green, 8)
-    col = None
+    blocks = []
     for i in range(1, n):
         x, y, bw, bh, area = st[i]
-        if area < 400 or bw > 0.40 * w:
+        if area < 400 or bw > 0.40 * w or bh < 8:
             continue
-        if col is None or area > col[4]:
-            col = (x, y, bw, bh, area)
+        blocks.append((x, y, bw, bh, area))
+    if not blocks:
+        return None
+    # najszerszy blok wyznacza kolumne, reszte laczymy po nim
+    x0, bw = max(((b[0], b[2]) for b in blocks), key=lambda t: t[1])
+    same = [b for b in blocks if abs(b[0] - x0) < 0.02 * w]
+    top = min(b[1] for b in same)
+    bottom = max(b[1] + b[3] for b in same)
+    return x0, bw, top, bottom
+
+
+def find_upgrade_buttons(img):
+    """Przyciski w menu 'Ulepszenia', ktore da sie kliknac.
+
+    Pomijamy: napis "MAX" (już wykupione) i przyciski SZARE (nie stac nas -
+    cena na czerwono). Zwraca liste (x, y).
+    """
+    h, w = img.shape[:2]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    col = _green_column(hsv, w)
     if col is None:
         return []
-    x, y, bw, bh, _ = col
-    white = cv2.inRange(hsv[y:y + bh, x:x + bw],
+    x, bw, top, bottom = col
+    white = cv2.inRange(hsv[top:bottom, x:x + bw],
                         np.array([0, 0, 190]), np.array([180, 60, 255]))
     runs = _text_rows(white)
     if not runs:
@@ -580,13 +594,21 @@ def find_upgrade_buttons(img):
     tmpl = cv2.imread(UPGRADE_MAX, cv2.IMREAD_GRAYSCALE)
     out = []
     for r in runs:
+        yy0, yy1 = top + r[0], top + r[1]
+        # kolor tla przycisku: zielony = da sie kupic, szary = nie
+        patch = hsv[yy0:yy1 + 1, x + 2:x + 12].reshape(-1, 3)
+        if patch.size:
+            mh = float(np.median(patch[:, 0]))
+            ms = float(np.median(patch[:, 1]))
+            if not (35 <= mh <= 95 and ms > 90):
+                continue                    # szary przycisk - pomijamy
         if tmpl is not None:
             scale = bw / tmpl.shape[1]
             t = tmpl if abs(scale - 1.0) < 0.03 else cv2.resize(
                 tmpl, (max(4, int(tmpl.shape[1] * scale)),
                        max(4, int(tmpl.shape[0] * scale))),
                 interpolation=cv2.INTER_AREA)
-            reg = img[max(0, y + r[0] - 4):y + r[1] + 5, x:x + bw]
+            reg = img[max(0, yy0 - 4):yy1 + 5, x:x + bw]
             if reg.size == 0:
                 continue
             g1 = cv2.cvtColor(reg, cv2.COLOR_BGR2GRAY)
@@ -595,7 +617,7 @@ def find_upgrade_buttons(img):
             res = cv2.matchTemplate(g1, t, cv2.TM_CCOEFF_NORMED)
             if float(res.max()) > 0.70:
                 continue                    # napis MAX - pomijamy
-        out.append((x + bw // 2, y + (r[0] + r[1]) // 2))
+        out.append((x + bw // 2, (yy0 + yy1) // 2))
     return out
 
 
