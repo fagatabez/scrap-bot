@@ -508,6 +508,15 @@ def find_boost_icon(img, board=None):
 
 
 UPGRADE_MAX = os.path.join(HERE, "assets", "upgrade_max.png")
+_MAX_TMPL = None
+
+
+def _upgrade_max_tmpl():
+    """Szablon napisu 'MAX' (wczytany raz, nie przy kazdym kliknieciu)."""
+    global _MAX_TMPL
+    if _MAX_TMPL is None:
+        _MAX_TMPL = cv2.imread(UPGRADE_MAX, cv2.IMREAD_GRAYSCALE)
+    return _MAX_TMPL
 
 
 def find_upgrade_arrow(img):
@@ -574,6 +583,42 @@ def _green_column(hsv, w):
     return x0, bw, top, bottom
 
 
+def button_state(img, col_x, col_w, x, y):
+    """Stan przycisku pod (x, y): 'green' (kupowalny), 'max', 'grey'.
+
+    Szybkie: patrzy tylko na male wycinki (kolor tla + wzorzec 'MAX'),
+    wiec mozna to sprawdzac po kazdej rundzie klikania.
+    """
+    h, w = img.shape[:2]
+    x0 = max(0, col_x + 2)
+    x1 = min(w, col_x + max(4, col_w // 4))
+    y0 = max(0, y - 9)
+    y1 = min(h, y + 10)
+    if x1 <= x0 or y1 <= y0:
+        return "grey"
+    hsv = cv2.cvtColor(img[y0:y1, x0:x1], cv2.COLOR_BGR2HSV)
+    mh = float(np.median(hsv[:, :, 0]))
+    ms = float(np.median(hsv[:, :, 1]))
+    if not (35 <= mh <= 95 and ms > 90):
+        return "grey"                    # szary - nie stac nas
+    tmpl = _upgrade_max_tmpl()
+    if tmpl is not None:
+        scale = col_w / tmpl.shape[1]
+        t = tmpl if abs(scale - 1.0) < 0.03 else cv2.resize(
+            tmpl, (max(4, int(tmpl.shape[1] * scale)),
+                   max(4, int(tmpl.shape[0] * scale))),
+            interpolation=cv2.INTER_AREA)
+        reg = img[max(0, y - t.shape[0] // 2):y - t.shape[0] // 2 + t.shape[0],
+                  col_x:col_x + col_w]
+        if reg.size:
+            g1 = cv2.cvtColor(reg, cv2.COLOR_BGR2GRAY)
+            if g1.shape[0] >= t.shape[0] and g1.shape[1] >= t.shape[1]:
+                res = cv2.matchTemplate(g1, t, cv2.TM_CCOEFF_NORMED)
+                if float(res.max()) > 0.70:
+                    return "max"
+    return "green"
+
+
 def find_upgrade_buttons(img):
     """Przyciski w menu 'Ulepszenia', ktore da sie kliknac.
 
@@ -591,7 +636,7 @@ def find_upgrade_buttons(img):
     runs = _text_rows(white)
     if not runs:
         return []
-    tmpl = cv2.imread(UPGRADE_MAX, cv2.IMREAD_GRAYSCALE)
+    tmpl = _upgrade_max_tmpl()
     out = []
     for r in runs:
         yy0, yy1 = top + r[0], top + r[1]

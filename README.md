@@ -237,13 +237,18 @@ Bot co jakiś czas (domyślnie co 180 s, `--upgrade-every`) sam wchodzi w menu
 ulepszeń i **kupuje wszystko, co się da**:
 
 1. klika pomarańczową **strzałkę** na dole planszy (to otwiera menu),
-2. w menu klika **zielone przyciski z ceną** - szybko, trzy razy w to samo
-   miejsce (przycisk zostaje, więc da się kupić kolejny poziom),
-3. przyciski z napisem **"MAX"** (już wykupione) **pomija** - rozpoznaje je
-   po wzorcu tekstu, nie po OCR,
-4. przyciski **szare** (nie starczy scrapu, cena na czerwono) też **pomija** -
-   sprawdza kolor tła każdego przycisku,
-5. zamyka menu czerwonym X-em i wraca do łączenia.
+2. klika **zielone przyciski z ceną** w pętli — **aż przycisk zrobi się
+   szary** (nie starczy scrapu) albo pokaże **"MAX"**. Przy dużym mnożniku
+   to mogą być setki poziomów jednego ulepszenia, więc klikanie trwa,
+   aż do końca,
+3. przyciski **szare** (nie starczy scrapu, cena na czerwono) i **"MAX"**
+   (już wykupione) **pomija** - MAX rozpoznaje po wzorcu tekstu, nie po OCR,
+4. zamyka menu czerwonym X-em i wraca do łączenia.
+
+Szybkość: ~40 kliknięć/s. Przykład z Twojego pytania - „LEPSZE BECZKI" od 0
+do 1000 to 999 poziomów ≈ **25 sekund** klikania; cała runda z kilkoma
+ulepszeniami to 2–3 minuty (limit `--upgrade-budget`, domyślnie 240 s), a
+kolejna runda dokończy to, co zostało.
 
 Wykrywanie strzałki i przycisków jest odporne na rozdzielczość (skaluje się
 z rozmiarem menu). Wyłączenie: `--upgrade-every 0`.
