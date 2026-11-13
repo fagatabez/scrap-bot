@@ -83,7 +83,7 @@ GUARD = True                # pilnowanie reklam/popupow
 BOOST_OFFER_EVERY = 60      # jak czesto klikac koronke eventow (s)
 CROWN_EVERY = 120            # minimalny odstep miedzy kliknieciami koronki (s)
 CROWN_BACKOFF = 30           # po odrzuceniu oferty - krotka przerwa
-UPGRADE_EVERY = 180          # jak czesto ulepszac wszystko co da sie kupic (s)
+UPGRADE_EVERY = 30          # jak czesto ulepszac wszystko co da sie kupic (s)
 WATCH_OFFER = True          # klikanie koronki eventow (obserwowanie boostow)
 HUMAN = 0.0                 # % celowych bledow przy merge (jak w "ludzkim" bocie)
 HUMAN_MAX = 0               # limit merge'ow na 10 min (0 = bez limitu)
@@ -331,10 +331,10 @@ def scanner_loop():
     last_boost_check = 0.0
     last_crown = 0.0
     last_crown_check = 0.0
-    last_upgrade = t0 - UPGRADE_EVERY + 60   # pierwsze ulepszenie po minucie
+    # pierwsze ulepszenie minuta po starcie
+    last_upgrade = time.time() - UPGRADE_EVERY + 60
     seen_game = False            # czy widzielismy juz Scrap Clicker 2
     warned_other = False
-    boost_on = False
     fails = 0
     while not STATE["stop"]:
         if STATE["paused"]:
