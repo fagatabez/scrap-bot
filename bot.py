@@ -194,14 +194,25 @@ def upgrade_pass(verbose=True, budget=None):
     if not pos:
         return 0
     IO.tap(*pos)
-    time.sleep(0.8)
-    frame = grab()
-    if not ads.upgrade_menu_open(frame):
+    # menu moze sie otwierac z opoznieniem (animacja) - czekamy na nie
+    frame = None
+    open_until = time.time() + 4.0
+    while time.time() < open_until:
+        time.sleep(0.3)
+        frame = grab()
+        if ads.upgrade_menu_open(frame) and ads.find_close_button(frame):
+            break
+    if frame is None or not ads.upgrade_menu_open(frame):
         return 0
     if not ads.find_close_button(frame):
         # to nie menu ulepszen (cos innego otworzlo sie) - nie klikamy w nic
         return 0
     btns = ads.find_upgrade_buttons(frame)
+    if not btns:
+        # menu sie otworzlo, ale przyciski sie nie czytaja - sprobujmy raz
+        time.sleep(0.5)
+        frame = grab()
+        btns = ads.find_upgrade_buttons(frame)
     col = ads._green_column(ads.cv2.cvtColor(frame, ads.cv2.COLOR_BGR2HSV),
                             frame.shape[1])
     clicks = 0

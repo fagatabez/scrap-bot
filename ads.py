@@ -583,6 +583,23 @@ def _green_column(hsv, w):
     return x0, bw, top, bottom
 
 
+def _max_template(col_w):
+    """Szablon 'MAX' przeskalowany do szerokosci kolumny przyciskow.
+
+    Kolumna bywa o piksel szerza/nuzsza niz oryginalny szablon, wiec skalujemy
+    zawsze - inaczej porownanie jest pomijane albo wyrzuca wszystkie wiersze.
+    """
+    tmpl = _upgrade_max_tmpl()
+    if tmpl is None:
+        return None
+    scale = col_w / float(tmpl.shape[1])
+    if abs(scale - 1.0) < 0.005:
+        return tmpl
+    return cv2.resize(tmpl, (max(4, int(round(tmpl.shape[1] * scale))),
+                           max(4, int(round(tmpl.shape[0] * scale)))),
+                      interpolation=cv2.INTER_AREA)
+
+
 def button_state(img, col_x, col_w, x, y):
     """Stan przycisku pod (x, y): 'green' (kupowalny), 'max', 'grey'.
 
@@ -601,21 +618,15 @@ def button_state(img, col_x, col_w, x, y):
     ms = float(np.median(hsv[:, :, 1]))
     if not (35 <= mh <= 95 and ms > 90):
         return "grey"                    # szary - nie stac nas
-    tmpl = _upgrade_max_tmpl()
-    if tmpl is not None:
-        scale = col_w / tmpl.shape[1]
-        t = tmpl if abs(scale - 1.0) < 0.03 else cv2.resize(
-            tmpl, (max(4, int(tmpl.shape[1] * scale)),
-                   max(4, int(tmpl.shape[0] * scale))),
-            interpolation=cv2.INTER_AREA)
+    t = _max_template(col_w)
+    if t is not None:
         reg = img[max(0, y - t.shape[0] // 2):y - t.shape[0] // 2 + t.shape[0],
                   col_x:col_x + col_w]
-        if reg.size:
+        if reg.size and reg.shape[0] >= t.shape[0] and reg.shape[1] >= t.shape[1]:
             g1 = cv2.cvtColor(reg, cv2.COLOR_BGR2GRAY)
-            if g1.shape[0] >= t.shape[0] and g1.shape[1] >= t.shape[1]:
-                res = cv2.matchTemplate(g1, t, cv2.TM_CCOEFF_NORMED)
-                if float(res.max()) > 0.70:
-                    return "max"
+            res = cv2.matchTemplate(g1, t, cv2.TM_CCOEFF_NORMED)
+            if float(res.max()) > 0.70:
+                return "max"
     return "green"
 
 
@@ -636,7 +647,6 @@ def find_upgrade_buttons(img):
     runs = _text_rows(white)
     if not runs:
         return []
-    tmpl = _upgrade_max_tmpl()
     out = []
     for r in runs:
         yy0, yy1 = top + r[0], top + r[1]
@@ -647,13 +657,11 @@ def find_upgrade_buttons(img):
             ms = float(np.median(patch[:, 1]))
             if not (35 <= mh <= 95 and ms > 90):
                 continue                    # szary przycisk - pomijamy
-        if tmpl is not None:
-            scale = bw / tmpl.shape[1]
-            t = tmpl if abs(scale - 1.0) < 0.03 else cv2.resize(
-                tmpl, (max(4, int(tmpl.shape[1] * scale)),
-                       max(4, int(tmpl.shape[0] * scale))),
-                interpolation=cv2.INTER_AREA)
-            reg = img[max(0, yy0 - 4):yy1 + 5, x:x + bw]
+        t = _max_template(bw)
+        if t is not None:
+            cy = (yy0 + yy1) // 2
+            reg = img[max(0, cy - t.shape[0] // 2):cy - t.shape[0] // 2 + t.shape[0],
+                      x:x + bw]
             if reg.size == 0:
                 continue
             g1 = cv2.cvtColor(reg, cv2.COLOR_BGR2GRAY)
