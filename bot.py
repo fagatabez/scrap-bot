@@ -26,7 +26,7 @@ Uzycie:
     python bot.py --merge 3       # jeden przebieg, maks. 3 merge'y
     python bot.py --until-done    # konczy, gdy nie ma czego laczyc
     python bot.py --collect       # tylko zbieraj scrap (przejazd po ekranie)
-    python bot.py --no-sweep      # nie zbieraj przy bezczynnosci
+    python bot.py --sweep         # dodatkowo zbieraj scrap koleczkami (domyslnie nie)
     python bot.py --storm-merge   # lacz takze w sztormie (po kupieniu za gwiazdy)
     python bot.py --backend adb   # telefon przez ADB zamiast okna
 
@@ -75,7 +75,7 @@ SWEEP_STYLE = "auto"        # auto | circles (kolka) | zigzag (zygzak)
 CIRCLE_R = 0.10             # promien kolka jako ulamek krotszego boku ekranu
 CIRCLE_OVERLAP = 0.35       # ile sasiednie kolka na siebie nachodza
 SWEEP_EVERY = 1.5           # co tyle sekund bez par zbieraj scrap (0 = nigdy)
-SWEEP = True                # zbieranie trzymajac (machanie po ekranie)
+SWEEP = False               # zbieranie trzymajac (koleczka) - wylaczone domyslnie
 STORM_PAUSE = 0.10          # przerwa miedzy cyklami zbierania w sztormie
 IDLE = 0.01                 # przerwa, gdy nie ma czego laczyc
 MAX_BATCH = 0               # max dragow z jednego skanu (0 = bez limitu)
@@ -913,8 +913,11 @@ def main():
     ap.add_argument("--batch", type=int, default=None,
                     help="max dragow z jednego zrzutu (0 = bez limitu)")
     ap.add_argument("--collect", action="store_true", help="tylko zbieraj scrap")
+    ap.add_argument("--sweep", action="store_true",
+                    help="zbieraj scrap koleczkami, gdy nie ma co laczyc "
+                         "(domyslnie wylaczone - bot tylko laczy)")
     ap.add_argument("--no-sweep", action="store_true",
-                    help="nie zbieraj scrapa przy bezczynnosci")
+                    help="nie zbieraj scrapa przy bezczynnosci (domyslnie)")
     ap.add_argument("--sweep-style", choices=("auto", "circles", "zigzag"),
                     default=SWEEP_STYLE,
                     help="kolka czy zygzak przy zbieraniu (auto: PC=kolka, telefon=zygzak)")
@@ -945,7 +948,7 @@ def main():
                     help="bez wzorca: lacz najblizsza pare zamiast po ludzku")
     args = ap.parse_args()
 
-    SWEEP = not args.no_sweep
+    SWEEP = args.sweep and not args.no_sweep
     SWEEP_STYLE = args.sweep_style
     CIRCLE_R = max(0.03, args.circle_r)
     SWEEP_MS = max(300, args.sweep_ms)

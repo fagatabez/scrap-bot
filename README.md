@@ -81,9 +81,12 @@ gestia:
   komputerze, a merge to jeden gest (~60 ms) zamiast kolejki procesow
   `input swipe`. Wymaga uruchomienia bota z roota: `bash run_root.sh`.
 
-Bot robi przejazd w sztormie i wtedy, gdy przez 1,5 s nie ma czego laczyc.
+Bot robi przejazd **tylko** na żądanie (`--sweep`) - domyślnie **w ogóle nie
+macha kursorem po planszy**, tylko łączy. W sztormie działa osobny tryb:
+zbieranie tego, co spada (patrz niżej).
+
 Ustawienia: `--sweep-style circles|zigzag`, `--circle-r`, `--sweep-ms`,
-`--sweep-every`; wylaczenie: `--no-sweep`.
+`--sweep-every`.
 
 ## Telefon: mniej falszywych laczen
 
