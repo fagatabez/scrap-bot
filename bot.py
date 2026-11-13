@@ -42,6 +42,9 @@ import time
 import os
 import tempfile
 
+import cv2
+import numpy as np
+
 import ads
 import backends
 import pairs
@@ -78,7 +81,7 @@ IDLE = 0.01                 # przerwa, gdy nie ma czego laczyc
 MAX_BATCH = 0               # max dragow z jednego skanu (0 = bez limitu)
 GUARD = True                # pilnowanie reklam/popupow
 BOOST_OFFER_EVERY = 60      # jak czesto klikac koronke eventow (s)
-OFFER_RETRY = 12            # po odrzuceniu oferty - sprobujmy za ile sekund
+CROWN_EVERY = 120            # jak czesto klikac koronke eventow (s)
 WATCH_OFFER = True          # klikanie koronki eventow (obserwowanie boostow)
 HUMAN = 0.0                 # % celowych bledow przy merge (jak w "ludzkim" bocie)
 HUMAN_MAX = 0               # limit merge'ow na 10 min (0 = bez limitu)
@@ -209,6 +212,46 @@ def storm_sweep(frame=None, verbose=False):
     return len(pts)
 
 
+def storm_collect(frame=None, verbose=False):
+    """W sztormie zbiera to, co SPADA.
+
+    Chmury sa statyczne, wiec porownujemy dwie klatki - plamy, ktore sie
+    zmienily, to spadajace przedmioty. Gest idzie do nich, a nie po calym
+    ekranie, wiec nie marnujemy czasu na kolka.
+    """
+    a = grab()
+    time.sleep(0.06)
+    b = grab()
+    h, w = b.shape[:2]
+    diff = cv2.absdiff(a, b)
+    gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
+    m = (gray > 26).astype(np.uint8) * 255
+    m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    # obszar gry: bez HUD na gorze i dolnego paska
+    mask = np.zeros_like(m)
+    mask[int(h * 0.15):int(h * 0.88), int(w * 0.05):int(w * 0.95)] = 255
+    m = cv2.bitwise_and(m, mask)
+    n, _, st, _ = cv2.connectedComponentsWithStats(m, 8)
+    pts = []
+    for i in range(1, n):
+        x, y, bw, bh, area = st[i]
+        if area < 10 or area > 0.04 * h * w:
+            continue
+        pts.append((x + bw // 2, y + bh // 2))
+    if not pts:
+        # nic nie spada - wtedy stare szybkie kolka
+        return storm_sweep(verbose=verbose)
+    pts.sort(key=lambda p: p[1])
+    path = pts[:8]
+    total = max(150, len(path) * 45)
+    IO.hold_path(path, seg_ms=SWEEP_SEG_MS, total_ms=total)
+    if getattr(IO, "async_input", False):
+        time.sleep(total / 1000.0 + 0.05)
+    if verbose:
+        print(f"[BOT] sztorm: zbieram {len(path)} spadajacych")
+    return len(path)
+
+
 def collect(frame=None, verbose=True, lines=None):
     """Zbiera scrap trzymajac: jedna dluga gestia przez caly ekran.
 
@@ -248,7 +291,6 @@ def scanner_loop():
     last_boost = 0.0
     last_boost_check = 0.0
     last_crown = 0.0
-    last_crown_check = 0.0
     seen_game = False            # czy widzielismy juz Scrap Clicker 2
     warned_other = False
     boost_on = False
@@ -298,8 +340,7 @@ def scanner_loop():
             # --- PRIORYTET 1: koronka eventow ------------------------------
             # Jak koronka jest na ekranie, klikamy ja od razu (oferta boostu
             # znika po chwili i nie warto czekac na kolejna klatke).
-            if (not popup and in_game and ts - last_crown > 5.0
-                    and ts - last_crown_check > 0.25
+            if (not popup and in_game and ts - last_crown > CROWN_EVERY
                     and BOOST is not None and getattr(BOOST, "popup", False)):
                 pos = ads.find_boost_icon(frame, ads.board_rect(frame))
                 if pos:
@@ -555,7 +596,7 @@ def worker_loop(forever=True):
             if not forever:
                 print("[BOT] sztorm - koncze, w sztormie nie da sie laczyc")
                 break
-            storm_sweep(verbose=False)
+            storm_collect(verbose=False)
             time.sleep(STORM_PAUSE)
             continue
         storm_announced = False

@@ -212,9 +212,10 @@ jego miejscu jest niebieski licznik czasu (np. 02:56). Wtedy bot nie ma czego
 klikać i po prostu łączy - w logu wypisze "boost 'Szybsze Beczki' aktywny".
 Koronka wraca później z kolejną ofertą.
 
-**Koronka to priorytet nr 1:** skaner sprawdza ją w każdej klatce (raz na
-0,25 s) i klika **natychmiast**, gdy się pojawi - nie czeka na przerwę
-w łączeniu. Gdy wyskoczy
+**Koronka:** bot klika ją, gdy się pojawi, ale **nie częściej niż raz na 2
+minuty** (`--boost-every`), żeby nie przerywać łączeniu. W trybie domyślnym
+bot jest skupiony na szybkim łączeniu - przerwy są tylko wtedy, gdy sama
+reklama się pojawi. Gdy wyskoczy
 oferta **nie**będąca boostec, bot ją odrzuca ("Nie") i ** próbuje ponownie
 za 12 s** - koronka wraca szybko, a wybór oferty jest losowy, więc "Szybsze
 Beczki" w końcu się trafia. Po
@@ -244,12 +245,16 @@ Uwaga (z wiki gry): automaty i makra sa w tej grze uznawane za cheating, a
 gra ma ekran anty-cheat i moderatorow. Bot jest wiec celowo mniej "mądry"
 niz człowiek: ogranicza liczbe bledow, nie robi wszystkiego naraz.
 
-## Sztorm: szybkie owalne kolka
+## Sztorm: zbieranie tego, co spada
 
-W sztormie laczenie jest zablokowana, wiec bot zbiera itemsy: robi **szybkie
-owalne kolka na srodku ekranu** (3 owale po ~20 punktow, ~0,4 s calego
-gestu) zamiast pelnego przejazdu po ekranie. Bez uinput (telefon bez roota)
-robi jedno dlugie kolo, bo kazdy odcinek to osobny proces `input`.
+W sztormie laczenie jest zablokowana, wiec bot zbiera itemsy. **Nie robi
+kolek** - chmury sa statyczne, wiec porownuje dwie klatki i szuka plam, ktore
+sie zmienily: to spadajace przedmioty. Gest idzie prosto do nich (najwyzej
+lezyace najpierw), a tlo chmury jest pomijane, bo sie nie rusza. Gdy nic nie
+spada, bot wraca do szybkich kolek.
+
+Test wykrywania (offline, na sztucznej klatce ze chmurami i spadajacym
+przedmiotem): trafia w przedmiot, na statycznych chmurach nie reaguje.
 
 ## Rozpoznawanie okna "Szybsze Beczki"
 
