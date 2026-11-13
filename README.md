@@ -132,25 +132,28 @@ bywa niewidoczny), dopiero potem czerwonym X-em na ekranie. Wylaczenie:
 Bot moze sie zachowywac jak czlowiek, a nie jak maszyna:
 
 ```powershell
-python bot.py --human 1          # 1% merge'ow celowo wybiera zla pare
-python bot.py --human 5          # 5% bledow
-python bot.py --human 10 3500    # 10% bledow + maks. 3500 laczen na 10 min
-python bot.py --human 10 3.5k   # to samo ("3.5k" tez dziala)
+python bot.py --human 1          # 1% prawdziwych pomyłek
+python bot.py --human 5          # 5% pomyłek
+python bot.py --human 10 3500    # 10% pomyłek + maks. 3500 laczeń na 10 min
+python bot.py --human 10 3.5k   # to samo ("3.5k" też działa)
 ```
 
 Przy `--human N` bot:
 
-* z szansa N% wybiera **inna pare** niz najlepsza - merge sie nie wykona
-  (wyglada jak czlowiek, ktory sie pomylil),
-* co 4-20 merge'y robi **losowa pauze** 50-400 ms.
+* z szansą N% **przeciąga beczkę na złą beczkę** (inną niż ta, z którą się
+  łączy) - merge się nie wykona, dokładnie jak przy pomyłce gracza. W logu
+  widać to jako „celowy blad”. Takich pomyłek **nie liczy** jako merge'y,
+  żeby licznik zgadzał się z grą,
+* co 4-20 merge'y robi **losową pauzę** 50-400 ms,
+* łączy **po wzorcu** (jak człowiek), a nie "najbliższa para".
 
-Drugi parametr to **limit laczen na 10 minut** (3500 = 5,8 merge'a/s). Bot
+Drugi parametr to **limit łączeń na 10 minut** (3500 = 5,8 merge'a/s). Bot
 mierzy swoje tempo i jak jest za szybki - **zwalnia**, z losowymi wahaniami
-(raz wolniej, raz szybciej, ±30%), wiec wyglada jak człowiek, a nie jak
-limitowarka. Dla porownania: normalni gracze robia ok. 3,5 tys. laczen na
+(raz wolniej, raz szybciej, ±30%), więc wygląda jak człowiek, a nie jak
+limitowarka. Dla porównania: normalni gracze robią ok. 3,5 tys. łączeń na
 booscie w 10 min, najlepsi 4-4,5 tys.
 
-Bez `--human` bot jest pelnomaszynowy: 0 bledow, zero pauz, bez limitu.
+Bez `--human` bot jest pełnomaszynowy: 0 błędów, zero pauz, bez limitu.
 
 ## Wzorzec laczenia (jak u ludzi)
 
@@ -197,7 +200,10 @@ eventow). Klikniecie jej otwiera okno z oferta "Szybsze Beczki" albo
    i czeka,
 4. dalej laczy beczki.
 
-Bot robi to co 60 s (`--boost-every`), o ile koronka jest widoczna. Po
+Bot robi to co 60 s (`--boost-every`), o ile koronka jest widoczna. Gdy wyskoczy
+oferta **nie**będąca boostec, bot ją odrzuca ("Nie") i ** próbuje ponownie
+za 12 s** - koronka wraca szybko, a wybór oferty jest losowy, więc "Szybsze
+Beczki" w końcu się trafia. Po
 kliknieciu **"Nie"** koronka znika na jakis czas i po chwili wraca z innym
 boostem - wtedy bot znów klika. **"Szybsze Beczki"** (10x szybciej przez
 10 min) bot bierze ("Tak!" + reklama), a inne oferty odrzuca ("Nie").

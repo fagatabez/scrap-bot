@@ -286,7 +286,7 @@ def title_is_boost(img, crown_bottom, btn_top, x0=0, x1=None):
     if prof is None:
         return False
     sim = float(np.dot(ref, prof) / (np.linalg.norm(ref) * np.linalg.norm(prof) + 1e-9))
-    return sim >= 0.97
+    return sim >= 0.95          # 'Szybsze Beczki' ~0.99, 'Auto Laczenie' ~0.90
 
 
 def find_boost_button(img):
@@ -463,7 +463,7 @@ def find_boost_icon(img, board=None):
     return (best[1], best[2]) if best else None
 
 
-def watch_offer(io):
+def watch_offer(io, verbose=True):
     """Kliknie koronke eventow i obsluzy oferte.
 
     Zwraca: 'tak' (obejrzano reklame = boost), 'nie' (odrzucono oferte),
@@ -474,6 +474,8 @@ def watch_offer(io):
     pos = find_boost_icon(frame, board)
     if not pos:
         return None
+    if verbose:
+        print(f"[BOT] koronka eventow na {pos} - klikam")
     io.tap(*pos)
     # okno moze sie otworzyc z opoznieniem (animacja) - sprawdzamy kilka razy
     for wait in (0.5, 0.8, 1.2, 1.8, 2.5):

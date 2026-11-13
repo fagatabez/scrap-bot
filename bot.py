@@ -78,6 +78,7 @@ IDLE = 0.01                 # przerwa, gdy nie ma czego laczyc
 MAX_BATCH = 0               # max dragow z jednego skanu (0 = bez limitu)
 GUARD = True                # pilnowanie reklam/popupow
 BOOST_OFFER_EVERY = 60      # jak czesto klikac koronke eventow (s)
+OFFER_RETRY = 12            # po odrzuceniu oferty - sprobujmy za ile sekund
 WATCH_OFFER = True          # klikanie koronki eventow (obserwowanie boostow)
 HUMAN = 0.0                 # % celowych bledow przy merge (jak w "ludzkim" bocie)
 HUMAN_MAX = 0               # limit merge'ow na 10 min (0 = bez limitu)
@@ -429,6 +430,28 @@ def _remember_action(a, b):
     ACTIONS[:] = [x for x in ACTIONS if now - x[4] <= 5.0]
 
 
+def _wrong_target(boxes, b, radius, forbidden):
+    """Losowa zla beczka w poblizu - czlowiek czasem ciagnie nie na ta.
+
+    `forbidden` to numery beczek tego samego poziomu (na nie sie polaczylo).
+    Zwraca punkt (x, y) albo None.
+    """
+    cands = []
+    for idx, box in enumerate(boxes):
+        if idx in forbidden:
+            continue
+        c = center(box)
+        if abs(c[0] - b[0]) < 12 and abs(c[1] - b[1]) < 12:
+            continue
+        d = (c[0] - b[0]) ** 2 + (c[1] - b[1]) ** 2
+        if d < (radius * 7) ** 2:
+            cands.append((d, c))
+    if not cands:
+        return None
+    cands.sort()
+    return random.choice(cands[:4])[1]
+
+
 def _blocked(a, b, now, radius):
     """Czy ktorys koniec pary lezy na polu dotknietym niedawno dragiem."""
     r2 = radius * radius
@@ -459,7 +482,8 @@ def worker_loop(forever=True):
     idx = 0
     recent = {}
     last_sweep = t0
-    last_offer = t0           # kiedy ostatnio kliknieto koronke eventow
+    last_offer = t0 - BOOST_OFFER_EVERY + 20   # pierwsza proba koronki po 20 s
+    offer_wait = BOOST_OFFER_EVERY   # odstep miedzy probami klikniecia koronki
     marks = []                  # czasy ostatnich merge'y (2 s) do tempa "teraz"
     pace_marks = []             # czasy merge'ow (30 s) do limitu na 10 min
     batch = 0                   # ile dragow poszlo z biezacego skanu
@@ -518,7 +542,7 @@ def worker_loop(forever=True):
         if (WATCH_OFFER and BOOST is not None
                 and getattr(BOOST, "popup", False)
                 and plan is not None
-                and now - last_offer >= BOOST_OFFER_EVERY):
+                and now - last_offer >= offer_wait):
             last_offer = now
             try:
                 r = ads.watch_offer(IO)
@@ -528,17 +552,21 @@ def worker_loop(forever=True):
             if r == "tak":
                 print("[BOT] obejrzalem reklame - beczki 10x szybciej "
                       "przez 10 min")
+                offer_wait = BOOST_OFFER_EVERY
                 last_action = time.time()
                 cur = None
                 cur_id = None
                 continue
             if r == "nie":
-                print("[BOT] inna oferta - odrzucilem (koronka wraci pozniej)")
+                print("[BOT] inna oferta - odrzucilem, sprobuje za "
+                      f"{OFFER_RETRY:.0f} s")
+                offer_wait = OFFER_RETRY
                 last_action = time.time()
                 cur = None
                 cur_id = None
                 continue
             # nie ma koronki - lecimy dalej bez przestoju
+            offer_wait = BOOST_OFFER_EVERY
 
         # brak par (nawet jak plan istnieje) = plansza bez par do polaczenia
         pairs_now = len(plan["prs"]) if plan is not None else 0
@@ -604,16 +632,29 @@ def worker_loop(forever=True):
             cands.append((a, b, key, i, j))
             if len(cands) >= 8:
                 break
+        mistake = False
         if cands:
             if PATTERN:
                 cands = pattern_sort(boxes, cands)
             chosen = cands[0]
-            # tryb "ludzki": czasem wybieramy inna pare niz najlepsza -
-            # merge sie nie wykona i bot wyglada jak czlowiek, nie maszyna
-            if HUMAN > 0 and len(cands) > 1 and random.random() * 100 < HUMAN:
-                chosen = random.choice(cands[1:])
-                print(f"[BOT] celowy blad ({HUMAN:g}%): merge ({chosen[0][0]},"
-                      f"{chosen[0][1]}) -> ({chosen[1][0]},{chosen[1][1]})")
+            # tryb "ludzki": czasem ciagniemy na ZLA beczke - merge sie nie
+            # wykona, dokladnie tak jak przy pomyłce gracza (a nie na inna
+            # dobra pare, ktora i tak by sie polaczyla)
+            if HUMAN > 0 and random.random() * 100 < HUMAN:
+                # wszystkie beczki tego samego poziomu - na nie sie polaczy,
+                # wiec pomyłka musi trafic w inna beczke
+                same = {chosen[3], chosen[4]}
+                for pi, pj, _d in prs:
+                    if pi in same or pj in same:
+                        same.add(pi)
+                        same.add(pj)
+                wrong = _wrong_target(boxes, chosen[1], radius, same)
+                if wrong:
+                    mistake = True
+                    print(f"[BOT] celowy blad ({HUMAN:g}%): merge "
+                          f"({chosen[0][0]},{chosen[0][1]}) -> "
+                          f"({wrong[0]},{wrong[1]}) - zla beczka, nie polaczy sie")
+                    chosen = (chosen[0], wrong, chosen[2])
 
         if chosen is None:
             cur = None
@@ -642,8 +683,9 @@ def worker_loop(forever=True):
         last_action = time.time()
         recent[key] = last_action
         last_progress = last_action
-        total += 1
-        batch += 1
+        if not mistake:
+            total += 1              # celowy blad to nie merge
+            batch += 1
         if MAX_BATCH and batch >= MAX_BATCH:
             # telefon: nie kolejkuj kolejnych dragow na nieaktualnym zrzucie
             cur = None
